@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <alloca.h>
 
 #include "std_utils.h"
 
@@ -22,7 +23,6 @@ typedef unsigned int uint;
 //    Macro locals
 //    Macro parameters
 //    Expressions resolution
-//    Includes
 //    Lines with labels and no code
 //    Error exit codes
 //    Header file
@@ -58,7 +58,10 @@ typedef struct __Line {
     struct __Line* next_line;
 
     Token* tokens;
-    string_slice comment;
+    union {
+        string_slice comment;
+        string_slice line_content;
+    };
 
     LineType type;
 
@@ -66,6 +69,7 @@ typedef struct __Line {
     bool has_label;
     bool belongs_to_macro_def;
 
+    string_slice file_name;
     uint line_number;
 
     uint address;
@@ -113,6 +117,28 @@ static StringUintPair* label_dict = NULL;
 static usize label_dict_capacity = 0;
 static usize label_dict_count = 0;
 
+void fail(Line* line, uint exit_code, const char* fmt, ...) {
+    va_list var_args;
+    va_start(var_args, fmt);
+
+    fprintf(stderr, "\n\n");
+
+    // TODO(erick): Add some colors
+    if(line) {
+        fprintf(stderr, "[ERROR] %.*s:%d: ",
+                (int) line->file_name.len,
+                line->file_name.begin,
+                line->line_number);
+    } else {
+        fprintf(stderr, "[ERROR]: ");
+    }
+
+    vfprintf(stderr, fmt, var_args);
+    fprintf(stderr, "\n");
+
+    va_end(var_args);
+    exit(exit_code);
+}
 
 void print_help_and_exit(int status) {
     printf("HELP\n");
@@ -243,7 +269,7 @@ bool search_label_dict(string_slice to_search, uint* result) {
     return false;
 }
 
-Line* divide_in_lines(char* data) {
+Line* divide_in_lines(char* data, string_slice filename) {
     Line* result = (Line*) malloc(sizeof(Line));
     Line* current_line = result;
 
@@ -264,8 +290,9 @@ Line* divide_in_lines(char* data) {
 
         string_slice slice = make_string_slice_with_len(start, end - start);
 
-        current_line->comment = slice;
-        current_line->line_number = current_line_number;
+        current_line->line_content = slice;
+        current_line->line_number  = current_line_number;
+        current_line->file_name = filename;
 
         if(*data == '\0') { break; }
 
@@ -323,7 +350,6 @@ void tokenize_lines(Line* lines) {
     while(current_line) {
         string_slice full_line = current_line->comment;
 
-        // TODO(erick): find from the left.
         string_slice code = find_char_from_left(full_line, ';');
         if(code.len > 0 && code.begin[code.len - 1] == ';') {
             code.len--;
@@ -357,9 +383,8 @@ void tokenize_lines(Line* lines) {
             } else if(*code.begin == '$') {
                 token = make_string_slice("$");
             } else {
-                fprintf(stderr, "Invalid character!: %c [0x%x] at line: %d\n",
-                        *code.begin, *code.begin, current_line->line_number);
-                exit(3);
+                fail(current_line, 3, "Invalid character (%c) [0x%x]",
+                     *code.begin, *code.begin);
             }
 
             code.begin += token.len;
@@ -481,11 +506,9 @@ void classify_lines(Line* lines) {
             current_line->has_label = true;
 
             if(!second_token->next_token) {
-                fprintf(stderr, "Label with no code: %.*s at line: %d\n",
-                        (int) first_token->slice.len,
-                        first_token->slice.begin,
-                        current_line->line_number);
-                exit(4);
+                fail(current_line, 4, "Label with no code (%.*s)",
+                     (int) first_token->slice.len,
+                     first_token->slice.begin);
             }
 
         } else {
@@ -534,20 +557,17 @@ void apply_equalities(Line* lines) {
             Token* third_token  = second_token->next_token;
 
             if(!third_token) {
-                fprintf(stderr, "Invalid 'equ': %.*s at line: %d\n",
-                        (int) first_token->slice.len,
-                        first_token->slice.begin,
-                        current_line->line_number);
-                exit(5);
+                fail(current_line, 5, "Invalid 'equ' (%.*s)",
+                    (int) first_token->slice.len,
+                     first_token->slice.begin);
             }
 
             if(search_equ_dict(first_token->slice) != NULL) {
-                fprintf(stderr, "At line %d: EQU (%.*s) has already been defined!\n",
-                        current_line->line_number,
-                        (int) first_token->slice.len,
-                        first_token->slice.begin);
-                exit(5);
+                fail(current_line, 5, "EQU (%.*s) has already been defined",
+                    (int) first_token->slice.len,
+                     first_token->slice.begin);
             }
+
             add_to_equ_dict(first_token->slice, third_token);
         }
 
@@ -655,22 +675,20 @@ void apply_macros(Line* lines) {
     while(current_line) {
         if(is_reading_macro) {
             if(!current_line->next_line) {
-                fprintf(stderr, "Macro with no END: %.*s\n",
-                        (int) current_macro_name.len,
-                        current_macro_name.begin);
-                exit(6);
+                fail(NULL, 6, "Macro with no END: %.*s\n",
+                     (int) current_macro_name.len,
+                     current_macro_name.begin);
             }
 
             if(current_line->next_line->type == MACRO_END) {
                 is_reading_macro = false;
                 current_macro_end = current_line;
                 if(search_macro_dict(current_macro_name) != NULL) {
-                    fprintf(stderr, "At line %d: double macro definition (%.*s)!\n",
-                            current_line->line_number,
-                            (int) current_macro_name.len,
-                            current_macro_name.begin);
-                    exit(6);
+                    fail(current_macro_begin, 6, "Double macro definition (%.*s)",
+                         (int) current_macro_name.len,
+                         current_macro_name.begin);
                 }
+
                 add_to_macro_dict(current_macro_name, current_macro_params,
                                   current_macro_begin, current_macro_end);
             }
@@ -688,10 +706,9 @@ void apply_macros(Line* lines) {
     }
 
     if(is_reading_macro) {
-        fprintf(stderr, "Macro with no END: %.*s\n",
-                (int) current_macro_name.len,
-                current_macro_name.begin);
-        exit(6);
+        fail(NULL, 6, "Macro with no END: %.*s\n",
+             (int) current_macro_name.len,
+             current_macro_name.begin);
     }
 
 
@@ -712,10 +729,8 @@ void apply_macros(Line* lines) {
             string_slice macro_name = macro_name_token->slice;
             Macro* macro = search_macro_dict(macro_name);
             if(!macro) {
-                fprintf(stderr, "Invoke non-defined Macro: %.*s at line: %d\n",
-                        (int) macro_name.len, macro_name.begin,
-                        current_line->line_number);
-                exit(7);
+                fail(current_line, 7, "Invoke non-defined Macro (%.*s)",
+                     (int) macro_name.len, macro_name.begin);
             }
 
             Line* macro_code = instanciate_macro_code(macro);
@@ -754,10 +769,7 @@ void remove_macros_space_properties(Line* lines) {
             current_line->belongs_to_macro_def = false;
 
             if(current_line->type == MACRO_END) {
-                fprintf(stderr,
-                        "ENDM found with no matching Macro definition at line %d!\n",
-                        current_line->line_number);
-                exit(6);
+                fail(current_line, 6, "ENDM found with no matching Macro definition");
             }
 
             if(current_line->type == MACRO_DEF) {
@@ -866,18 +878,14 @@ void compute_addresses(Line* lines) {
         if(current_line->type == ORIGIN) {
             Token* value_token = current_line->tokens->next_token;
             if(!value_token) {
-                fprintf(stderr, " ORG with no value at line: %d.\n",
-                        current_line->line_number);
-                exit(8);
+                fail(current_line, 8, "ORG with no value");
             }
 
             uint16 org;
             if(!parse_value(value_token, &org)) {
-                fprintf(stderr, "Value at line: %d could not be parsed (%.*s).\n",
-                        current_line->line_number,
-                        (int) value_token->slice.len,
-                        value_token->slice.begin);
-                exit(8);
+                fail(current_line, 8, "Value could not be parsed (%.*s)",
+                     (int) value_token->slice.len,
+                     value_token->slice.begin);
             }
 
             current_address = org;
@@ -893,11 +901,9 @@ void compute_addresses(Line* lines) {
             Token* label_token = current_line->tokens;
 
             if(search_label_dict(label_token->slice, &ignored)) {
-                fprintf(stderr, "At line %d: Double label definition (%.*s)\n",
-                        current_line->line_number,
-                        (int) label_token->slice.len,
-                        label_token->slice.begin);
-                exit(8);
+                fail(current_line, 8, "Double label definition (%.*s)",
+                     (int) label_token->slice.len,
+                     label_token->slice.begin);
             }
 
             add_to_label_dict(label_token->slice, current_address);
@@ -992,9 +998,7 @@ void generate_machine_code(Line* lines) {
         if(current_line->occupies_space) {
             uint address = current_line->address;
             if(address >= MEMORY_SIZE) {
-                fprintf(stderr, "Address of line %d is greater than the memory.\n",
-                        current_line->line_number);
-                exit(9);
+                fail(current_line, 9, "Address of line is greater than the memory");
             }
 
             Token* instruction;
@@ -1005,9 +1009,7 @@ void generate_machine_code(Line* lines) {
             }
 
             if(!instruction) {
-                fprintf(stderr, "Line %d does not contain an instruction",
-                        current_line->line_number);
-                exit(9);
+                fail(current_line, 9, "Line does not contain an instruction");
             }
 
             Token* operand = instruction->next_token;
@@ -1015,34 +1017,26 @@ void generate_machine_code(Line* lines) {
             uint16 operand_code;
 
             if(!operand) {
-                fprintf(stderr, "Line %d does not contain an operand",
-                        current_line->line_number);
-                exit(9);
+                fail(current_line, 9, "Line does not contain an operand");
             }
 
             if(!parse_instruction(instruction, &instruction_code)) {
-                fprintf(stderr, "No valid instruction at line: %d [%.*s]\n",
-                        current_line->line_number,
-                        (int) instruction->slice.len,
-                        instruction->slice.begin);
-                exit(9);
+                fail(current_line, 9,"Line with no valid instruction (%.*s)",
+                     (int) instruction->slice.len,
+                     instruction->slice.begin);
             }
 
             if(!parse_value(operand, &operand_code)) {
-                fprintf(stderr, "No valid operand at line: %d [%.*s]\n",
-                        current_line->line_number,
-                        (int) operand->slice.len,
-                        operand->slice.begin);
-                exit(9);
+                fail(current_line, 9, "No valid operand (%.*s)",
+                     (int) operand->slice.len,
+                     operand->slice.begin);
             }
 
             if((!string_slice_equals(instruction->slice, dw_slice)) &&
                operand_code >= MAX_OPERAND) {
-                fprintf(stderr, "Error at line %d: operand (%.*s) exceeds 14 bits.\n",
-                        current_line->line_number,
-                        (int) operand->slice.len,
-                        operand->slice.begin);
-                exit(9);
+                fail(current_line, 9, "operand (%.*s) exceeds 14 bits",
+                     (int) operand->slice.len,
+                     operand->slice.begin);
             }
 
             current_line->memory_data = instruction_code | operand_code;
@@ -1139,6 +1133,51 @@ void output_separated_binary_files(char* file_stem) {
     fclose(file2);
 }
 
+void handle_includes(Line* lines) {
+    Line* current_line = lines;
+    while(current_line) {
+        const usize inc_size = strlen("#include");
+        if(strncmp(current_line->line_content.begin, "#include", inc_size) == 0) {
+            string_slice include = current_line->line_content;
+            include.begin += inc_size;
+            include.len   -= inc_size;
+
+            string_slice filename = trim_string_slice(include);
+
+            // TODO(erick): Search file in std files directory.
+            char* buffer = (char*) alloca(filename.len + 1);
+            snprintf(buffer,filename.len + 1, "%s", filename.begin);
+            fprintf(stderr, "[NOTE] Including: %s\n", buffer);
+
+            FILE* included = fopen(buffer, "r");
+            if(!included) {
+                fail(current_line, 10, "Could not found included file: %s\n", buffer);
+            }
+
+            char* included_data  = read_entire_file(included);
+            Line* included_lines = divide_in_lines(included_data, filename);
+
+            Line* tmp = included_lines;
+            if(!tmp) {
+                fail(current_line, 10, "Cannot include empty file: %s\n", buffer);
+            }
+
+            while(tmp->next_line) { tmp = tmp->next_line; }
+
+            //
+            // Inserting the included lines at the include place
+            //
+            tmp->next_line = current_line->next_line;
+            current_line->next_line = included_lines;
+
+            // Current line is replaced with a blank line.
+            current_line->line_content.len = 0;
+        }
+
+        current_line = current_line->next_line;
+    }
+}
+
 int main(int args_count, char** args_values) {
 
     char* output_filename = NULL;
@@ -1199,7 +1238,9 @@ int main(int args_count, char** args_values) {
 
     char* data = read_entire_file(input_file);
 
-    Line* lines = divide_in_lines(data);
+    Line* lines = divide_in_lines(data, make_string_slice(input_filename));
+
+    handle_includes(lines);
 
     tokenize_lines(lines);
 
