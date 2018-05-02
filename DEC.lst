@@ -1,0 +1,38 @@
+LST file
+
+; Meu programa
+0000:      NGT equ SB 0000h ; T = 0 - T, não pede emprestado se T for 0
+0000:      INV equ SB 0007h ;	T = T\, não pede emprestado;
+
+0000:      ORG 0 
+0000: 0000 Zero : DW 0 
+0001: 0001 Um : DW 1 
+0002: 0002 Dois : DW 2 
+0003: 0003 Tres : DW 3 
+0004: 0007 Sete : DW 7 
+0005: 000f Quinze : DW 15 
+0006: 8000 H8000 : DW 8000h 
+0007: ffff HFFFF : DW 0FFFFh ; menos 1
+
+0008:      IniRam equ 400h 
+
+0008:      Halt MACRO 
+0008:      LM Zero 
+0008:      SB Zero 
+0008:      DNP $ 
+0008:      ENDM 
+
+000f:      ORG 15 
+
+000f:      Var1 equ IniRam 
+000f: 0005 LM 0005h 
+0010: 4400 Loop : EM 400h 
+0011: 0001 LM 0001h 
+0012: 8400 SB 400h 
+0013: c010 DNP 0010h 
+0014: 0000 LM 0000h 
+0015: 8000 SB 0000h 
+0016: c016 DNP 0016h 
+0017: 0004 LM 0004h 
+0018: 4400 EM 400h 
+
