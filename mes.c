@@ -204,11 +204,9 @@ Token* search_equ_dict(string_slice to_search) {
 void add_to_macro_dict(string_slice name, Token* params, Line* begin, Line* end) {
     Macro macro = {name, params, begin, end};
 
-    // FIXME(erick): Macros with one line are not accepted!
-    if(!begin || !end || begin == end) {
-        fprintf(stderr, "Invalid Macro definition: %.*s\n",
-                (int) name.len, name.begin);
-        exit(6);
+    if(!begin || !end) {
+        fail(NULL, 6, "Invalid Macro definition: %.*s\n",
+             (int) name.len, name.begin);
     }
 
     if(macro_dict_capacity == 0) {
@@ -698,6 +696,13 @@ void apply_macros(Line* lines) {
                 current_macro_begin  = current_line->next_line;
                 current_macro_name   = current_line->tokens->slice;
                 current_macro_params = current_line->tokens->next_token->next_token;
+
+                if(current_line->next_line &&
+                   current_line->next_line->type == MACRO_END) {
+                    fail(current_line, 6, "Empty Macro definition (%.*s)",
+                         (int) current_macro_name.len,
+                         current_macro_name.begin);
+                }
             }
         }
 
@@ -705,6 +710,7 @@ void apply_macros(Line* lines) {
         current_line = current_line->next_line;
     }
 
+    // NOTE(erick): This should never be reached.
     if(is_reading_macro) {
         fail(NULL, 6, "Macro with no END: %.*s\n",
              (int) current_macro_name.len,
