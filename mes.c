@@ -21,14 +21,19 @@ typedef unsigned int uint;
 
 // TODO(erick):
 //    Macro locals
-//    Expressions resolution
-//    Case insentiveness
 //    Add comment on macro invocation
 //    Add comment on include
 //    Lines with labels and no code
+//    Bug when the first line of a macro contains a label.(and probably others properties)
+//    Macro inside macro bug
+//    Expressions resolution
+//    Case insentiveness
+//    Do something with line numbers of lines the came from a macro expansion
 //    Error exit codes
 //    Header file
 //    Linear memory allocator
+
+// TODO(erick): Assembler doesn't check for comma between macro params and segfaults
 
 #define MEMORY_SIZE 1024
 #define MAX_OPERAND 0x4000
@@ -41,6 +46,7 @@ typedef enum {
     MACRO_DEF,
     MACRO_END,
     MACRO_INVOKE,
+    MACRO_LOCALS,
     CODE,
     ALLOC,
     EQUALITY,
@@ -91,15 +97,20 @@ typedef struct {
 typedef struct {
     StringTokenPair* data;
     usize count;
-} MacroParamDict;
+} MacroReplaceDict;
 
 typedef struct {
     string_slice name;
     Token* params;
+    Token* local_labels;
+
     Line* begin;
     Line* end;
 
     uint params_count;
+    uint local_labels_count;
+
+    uint n_macro_instantiation;
 } Macro;
 
 //
@@ -209,33 +220,49 @@ Token* search_equ_dict(string_slice to_search) {
     return result;
 }
 
-void add_to_macro_dict(string_slice name, Token* params, Line* begin, Line* end) {
+bool count_comma_separated_tokens(Token* token, uint* result) {
     string_slice comma_token = make_string_slice(",");
-    uint params_count = 0;
 
-    if(params && params->slice.len) {
-        params_count++;
+    if(!token) {
+        *result = 0;
+        return true;
     }
 
-    Token* tmp = params;
-    while(tmp) {
-        if(string_slice_equals(tmp->slice, comma_token)) {
-            params_count++;
+    uint count = 0;
+    while(token) {
+        count++;
 
-            if(!tmp->next_token ||
-               string_slice_equals(tmp->next_token->slice, comma_token)) {
-                fail(NULL, 6, "Invalid parameter list for macro (%.*s)",
-                     (int) name.len, name.begin);
-            }
-        }
+        if(token->next_token && string_slice_equals(token->next_token->slice,
+                                                  comma_token)) {
+            Token* next_token = token->next_token->next_token;
+            if(!next_token) { return false; }
+            if(string_slice_equals(next_token->slice, comma_token)) { return false; }
 
-        tmp = tmp->next_token;
+            token = next_token;
+        } else { break; }
     }
 
-    Macro macro = {name, params, begin, end, params_count};
+    *result = count;
+    return true;
+}
+
+void add_to_macro_dict(Line* dec_line, string_slice name,
+                       Token* params, Token* locals,
+                       Line* begin, Line* end) {
+    uint params_count;
+    uint locals_count;
+    if(!count_comma_separated_tokens(params, &params_count)) {
+        fail(dec_line, 6, "Invalid parameter list.");
+    }
+
+    if(!count_comma_separated_tokens(locals, &locals_count)) {
+        fail(dec_line, 6, "Invalid LOCAL list.");
+    }
+
+    Macro macro = {name, params, locals, begin, end, params_count, locals_count, 0};
 
     if(!begin || !end) {
-        fail(NULL, 6, "Invalid Macro definition: %.*s\n",
+        fail(dec_line, 6, "Invalid Macro definition: %.*s\n",
              (int) name.len, name.begin);
     }
 
@@ -373,6 +400,15 @@ string_slice get_ident(string_slice slice) {
     return result;
 }
 
+Token* new_token(string_slice slice) {
+    Token* result = (Token*) malloc(sizeof(Token));
+
+    result->slice = slice;
+    result->next_token = NULL;
+
+    return result;
+}
+
 void tokenize_lines(Line* lines) {
     Line* current_line = lines;
     while(current_line) {
@@ -479,6 +515,7 @@ void classify_lines(Line* lines) {
 
     string_slice org_slice    = make_string_slice("ORG");
     string_slice endm_slice   = make_string_slice("ENDM");
+    string_slice local_slice   = make_string_slice("LOCAL");
     string_slice macro_slice  = make_string_slice("MACRO");
     string_slice column_slice = make_string_slice(":");
 
@@ -508,7 +545,14 @@ void classify_lines(Line* lines) {
             current_line->occupies_space = false;
 
             goto LOOP_END;
+        } else if(string_slice_equals(first_token->slice, local_slice)) {
+            current_line->type = MACRO_LOCALS;
+            current_line->has_label = false;
+            current_line->occupies_space = false;
+
+            goto LOOP_END;
         }
+
 
         Token* second_token = first_token->next_token;
 
@@ -646,7 +690,7 @@ void resolve_unknowns(Line* lines) {
     }
 }
 
-Token* copy_or_replace_tokens(Token* to_copy, MacroParamDict param_dict) {
+Token* copy_or_replace_tokens(Token* to_copy, MacroReplaceDict replace_dict) {
     if(!to_copy) { return NULL;  }
 
     Token* result = (Token*) malloc(sizeof(Token));
@@ -654,9 +698,9 @@ Token* copy_or_replace_tokens(Token* to_copy, MacroParamDict param_dict) {
     Token* current_token = result;
     while(true) {
         current_token->slice = to_copy->slice;
-        for(int i = 0; i < param_dict.count; i++) {
-            if(string_slice_equals(current_token->slice, param_dict.data[i].key)) {
-                current_token = replace_token(current_token, param_dict.data[i].data);
+        for(int i = 0; i < replace_dict.count; i++) {
+            if(string_slice_equals(current_token->slice, replace_dict.data[i].key)) {
+                current_token = replace_token(current_token, replace_dict.data[i].data);
                 break;
             }
         }
@@ -671,28 +715,65 @@ Token* copy_or_replace_tokens(Token* to_copy, MacroParamDict param_dict) {
     return result;
 }
 
-MacroParamDict build_macro_param_dict(Macro* macro, Token* args) {
+string_slice allocate_and_concatenate(string_slice a, string_slice b) {
+    char* data = (char*) malloc(a.len + b.len);
+
+    memcpy(data,         a.begin, a.len);
+    memcpy(data + a.len, b.begin, b.len);
+
+    string_slice result = { data, a.len + b.len };
+    return result;
+}
+
+MacroReplaceDict build_macro_replace_dict(Macro* macro, Token* args) {
     string_slice comma_slice = make_string_slice(",");
-    MacroParamDict result = {0};
+    MacroReplaceDict result = {0};
 
-    if(macro->params == 0) { return result; }
+    result.data = (StringTokenPair*)
+        malloc((macro->params_count + macro->local_labels_count) *
+               sizeof(StringTokenPair));
 
-    result.data = (StringTokenPair*) malloc(macro->params_count *
-                                            sizeof(StringTokenPair));
-    result.count = macro->params_count;
+    result.count = macro->params_count + macro->local_labels_count;
+
+
+    StringTokenPair* locals = result.data;
+    StringTokenPair* params = result.data + macro->local_labels_count;
+
+    //
+    // Filling LOCALs
+    //
+
+    Token* current_local = macro->local_labels;
+    for(int i = 0; i < macro->local_labels_count; i++) {
+        char buffer[16];
+        sprintf(buffer, "%03d", macro->n_macro_instantiation);
+        string_slice inst_number = make_string_slice(buffer);
+
+        string_slice label = allocate_and_concatenate(current_local->slice, inst_number);
+
+        locals[i].key = current_local->slice;
+        locals[i].data = new_token(label);
+
+        if(i != macro->local_labels_count - 1) {
+            current_local = current_local->next_token->next_token;
+        }
+    }
 
     //
     // Filling parameters.
     //
     // NOTE(erick): The parameter list is known to be correct.
+    // TODO(erick): This can be build once per macro and baked into the macro struct
+    if(macro->params == 0) { return result; }
+
     Token* current_param = macro->params;
     for(int i = 0; i < macro->params_count - 1; i++) {
-        result.data[i].key = current_param->slice;
+        params[i].key = current_param->slice;
         current_param = current_param->next_token->next_token;
     }
 
     // The last param
-    result.data[macro->params_count - 1].key = current_param->slice;
+    params[macro->params_count - 1].key = current_param->slice;
 
     //
     // Filling arguments
@@ -704,7 +785,7 @@ MacroParamDict build_macro_param_dict(Macro* macro, Token* args) {
                                                  comma_slice)) {
             Token* _arg = args;
             // Add to dict
-            result.data[current_arg_index].data = current_arg_token;
+            params[current_arg_index].data = current_arg_token;
             // Update variables
             current_arg_token = args->next_token->next_token;
             args = args->next_token->next_token;
@@ -732,7 +813,7 @@ MacroParamDict build_macro_param_dict(Macro* macro, Token* args) {
     //
     // Last param
     //
-    result.data[current_arg_index].data = current_arg_token;
+    params[current_arg_index].data = current_arg_token;
     current_arg_index++;
 
     if(current_arg_index != macro->params_count) {
@@ -744,7 +825,7 @@ MacroParamDict build_macro_param_dict(Macro* macro, Token* args) {
     return result;
 }
 
-Line* instanciate_macro_code(Macro* macro, MacroParamDict param_dict) {
+Line* instanciate_macro_code(Macro* macro, MacroReplaceDict replace_dict) {
     Line* result = (Line*) malloc(sizeof(Line));
     Line* current_line = result;
     Line* macro_line = macro->begin;
@@ -755,7 +836,7 @@ Line* instanciate_macro_code(Macro* macro, MacroParamDict param_dict) {
         current_line->occupies_space = macro_line->occupies_space;
         current_line->type           = macro_line->type;
 
-        current_line->tokens = copy_or_replace_tokens(macro_line->tokens, param_dict);
+        current_line->tokens = copy_or_replace_tokens(macro_line->tokens, replace_dict);
 
         if(!macro_line->next_line || macro_line == macro->end) {
             current_line->next_line = NULL;
@@ -770,20 +851,23 @@ Line* instanciate_macro_code(Macro* macro, MacroParamDict param_dict) {
     return result;
 }
 
-void apply_macros(Line* lines) {
+void read_macros(Line* lines) {
     Line* current_line = lines;
 
     bool is_reading_macro = false;
-    Line* current_macro_begin;
-    Line* current_macro_end;
-    string_slice current_macro_name;
-    Token* current_macro_params;
+    string_slice current_macro_name = {0};
 
-    //
-    // Reading MACROs
-    //
+    Line* current_macro_begin   = NULL;
+    Line* current_macro_end     = NULL;
+    Token* current_macro_params = NULL;
+    Token* current_macro_locals = NULL;
+
+
     while(current_line) {
+
         if(is_reading_macro) {
+            current_line->belongs_to_macro_def = true;
+
             if(!current_line->next_line) {
                 fail(NULL, 6, "Macro with no END: %.*s\n",
                      (int) current_macro_name.len,
@@ -791,6 +875,7 @@ void apply_macros(Line* lines) {
             }
 
             if(current_line->next_line->type == MACRO_END) {
+                current_line->next_line->belongs_to_macro_def = true;
                 is_reading_macro = false;
                 current_macro_end = current_line;
                 if(search_macro_dict(current_macro_name) != NULL) {
@@ -799,15 +884,26 @@ void apply_macros(Line* lines) {
                          current_macro_name.begin);
                 }
 
-                add_to_macro_dict(current_macro_name, current_macro_params,
-                                  current_macro_begin, current_macro_end);
+                add_to_macro_dict(current_line,
+                                  current_macro_name, current_macro_params,
+                                  current_macro_locals, current_macro_begin,
+                                  current_macro_end);
             }
         } else {
             if(current_line->type == MACRO_DEF) {
+                current_line->belongs_to_macro_def = true;
                 is_reading_macro = true;
-                current_macro_begin  = current_line->next_line;
+
                 current_macro_name   = current_line->tokens->slice;
                 current_macro_params = current_line->tokens->next_token->next_token;
+
+                if(current_line->next_line->type == MACRO_LOCALS) {
+                    current_macro_locals = current_line->next_line->tokens->next_token;
+                    current_macro_begin  = current_line->next_line->next_line;
+                } else {
+                    current_macro_locals = NULL;
+                    current_macro_begin  = current_line->next_line;
+                }
 
                 if(current_line->next_line &&
                    current_line->next_line->type == MACRO_END) {
@@ -828,14 +924,12 @@ void apply_macros(Line* lines) {
              (int) current_macro_name.len,
              current_macro_name.begin);
     }
+}
 
-
-    //
-    // Applying MACROs
-    //
-    current_line = lines;
+void apply_macros(Line* lines) {
+    Line* current_line = lines;
     while(current_line) {
-        if(current_line->type == MACRO_INVOKE) {
+        if(current_line->type == MACRO_INVOKE && !current_line->belongs_to_macro_def) {
             Token* macro_name_token;
 
             if(current_line->has_label) {
@@ -852,12 +946,22 @@ void apply_macros(Line* lines) {
             }
 
             Token* macro_args = macro_name_token->next_token;
-            MacroParamDict param_dict = build_macro_param_dict(macro, macro_args);
+            MacroReplaceDict replace_dict = build_macro_replace_dict(macro, macro_args);
 
-            Line* macro_code = instanciate_macro_code(macro, param_dict);
+            Line* macro_code = instanciate_macro_code(macro, replace_dict);
 
-            macro_name_token->slice = macro_code->tokens->slice;
-            macro_name_token->next_token = macro_code->tokens->next_token;
+            // NOTE(erick): First MACRO line may be blank
+            if(macro_code->tokens) {
+                macro_name_token->slice = macro_code->tokens->slice;
+                macro_name_token->next_token = macro_code->tokens->next_token;
+            } else {
+                if(current_line->has_label) {
+                    current_line->tokens->next_token->next_token = NULL;
+                } else {
+                    current_line->tokens = NULL;
+                }
+            }
+
             current_line->occupies_space = macro_code->occupies_space;
             current_line->type = macro_code->type;
 
@@ -868,8 +972,9 @@ void apply_macros(Line* lines) {
             }
 
             macro_code->next_line = old_next_line;
+            macro->n_macro_instantiation++;
 
-            if(param_dict.data) { free(param_dict.data); }
+            if(replace_dict.data) { free(replace_dict.data); }
         }
 
         current_line = current_line->next_line;
@@ -883,7 +988,6 @@ void remove_macros_space_properties(Line* lines) {
     while(current_line) {
         if(is_reading_macro) {
             current_line->occupies_space = false;
-            current_line->belongs_to_macro_def = true;
 
             if(current_line->type == MACRO_END) {
                 is_reading_macro = false;
@@ -1371,6 +1475,7 @@ int main(int args_count, char** args_values) {
 
     apply_equalities(lines);
     resolve_unknowns(lines);
+    read_macros(lines);
     apply_macros(lines);
     remove_macros_space_properties(lines);
 
