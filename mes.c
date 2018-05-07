@@ -21,12 +21,10 @@ typedef unsigned int uint;
 
 // TODO(erick):
 //    Case insentiveness
-//    Add comment on macro invocation
-//    Add comment on include
-//    Bug when the first line of a macro contains a label.(and probably others properties)
 //    Macro inside macro bug
 //    Expressions resolution
 //    Do something with line numbers of lines the came from a macro expansion
+//    Better print labels on the .lst file
 //    Error exit codes
 //    Header file
 //    Linear memory allocator
@@ -923,6 +921,35 @@ void read_macros(Line* lines) {
     }
 }
 
+string_slice concat_tokens(char* _prefix, Token* tokens, string_slice suffix) {
+    string_slice prefix = make_string_slice(_prefix);
+    usize mem_needed = prefix.len + suffix.len;
+
+    Token* current_token = tokens;
+    while(current_token) {
+        mem_needed += current_token->slice.len + 1;
+        current_token = current_token->next_token;
+    }
+
+    char* data = (char*) malloc(mem_needed);
+    string_slice result = {data, mem_needed};
+
+    memcpy(data, prefix.begin, prefix.len);
+    data += prefix.len;
+
+    current_token = tokens;
+    while(current_token) {
+        *data++ = ' ';
+        memcpy(data, current_token->slice.begin, current_token->slice.len);
+        data += current_token->slice.len;
+        current_token = current_token->next_token;
+    }
+
+    memcpy(data, suffix.begin, suffix.len);
+
+    return result;
+}
+
 void apply_macros(Line* lines) {
     Line* current_line = lines;
     while(current_line) {
@@ -942,28 +969,24 @@ void apply_macros(Line* lines) {
                      (int) macro_name.len, macro_name.begin);
             }
 
+            string_slice new_comment = concat_tokens(";",
+                                                     macro_name_token,
+                                                     current_line->comment);
+
             Token* macro_args = macro_name_token->next_token;
-            MacroReplaceDict replace_dict = build_macro_replace_dict(macro, macro_args);
+            // NOTE(erick): build_macro_replace_dict destroys the token argument list.
+            MacroReplaceDict replace_dict = build_macro_replace_dict(macro,
+                                                                     macro_args);
 
             Line* macro_code = instanciate_macro_code(macro, replace_dict);
 
-            // NOTE(erick): First MACRO line may be blank
-            if(macro_code->tokens) {
-                macro_name_token->slice = macro_code->tokens->slice;
-                macro_name_token->next_token = macro_code->tokens->next_token;
-            } else {
-                if(current_line->has_label) {
-                    current_line->tokens->next_token->next_token = NULL;
-                } else {
-                    current_line->tokens = NULL;
-                }
-            }
-
-            current_line->occupies_space = macro_code->occupies_space;
-            current_line->type = macro_code->type;
-
             Line* old_next_line = current_line->next_line;
-            current_line->next_line = macro_code->next_line;
+
+            current_line->occupies_space = false;
+            current_line->type = current_line->has_label ? LABEL : BLANK;
+            current_line->next_line = macro_code;
+            current_line->comment = new_comment;
+
             while(macro_code->next_line) {
                 macro_code = macro_code->next_line;
             }
@@ -1358,6 +1381,8 @@ void output_separated_binary_files(char* file_stem) {
 }
 
 void handle_includes(Line* lines) {
+    string_slice semicolumn_slice = make_string_slice("; ");
+
     Line* current_line = lines;
     while(current_line) {
         const usize inc_size = strlen("#include");
@@ -1394,8 +1419,10 @@ void handle_includes(Line* lines) {
             tmp->next_line = current_line->next_line;
             current_line->next_line = included_lines;
 
-            // Current line is replaced with a blank line.
-            current_line->line_content.len = 0;
+            // Current line is replaced with a blank line with a comment.
+            current_line->line_content =
+                allocate_and_concatenate(semicolumn_slice,
+                                         current_line->line_content);
         }
 
         current_line = current_line->next_line;
