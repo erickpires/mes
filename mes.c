@@ -826,6 +826,7 @@ Line* instanciate_macro_code(Macro* macro, MacroReplaceDict replace_dict) {
         current_line->has_label      = macro_line->has_label;
         current_line->occupies_space = macro_line->occupies_space;
         current_line->type           = macro_line->type;
+        current_line->belongs_to_macro_def = false;
 
         current_line->tokens = copy_or_replace_tokens(macro_line->tokens, replace_dict);
 
@@ -1115,7 +1116,6 @@ void compute_addresses(Line* lines) {
 
     uint current_address = 0;
     while(current_line) {
-        assert(current_line->type != MACRO_INVOKE);
         assert(current_line->type != UNKNOWN);
 
 
