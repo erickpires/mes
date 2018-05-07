@@ -436,14 +436,11 @@ void tokenize_lines(Line* lines) {
             } else if(is_alpha(*code.begin)) {
                 token = get_ident(code);
 
-                // TODO(erick): Collapse path to all single char tokens
-            } else if(*code.begin == ':') {
-                token = make_string_slice(":");
-
-            } else if(*code.begin == '$') {
-                token = make_string_slice("$");
-            }else if(*code.begin == ',') {
-                token = make_string_slice(",");
+            } else if(*code.begin == ':' ||
+                      *code.begin == '$' ||
+                      *code.begin == ',') {
+                token.begin = code.begin;
+                token.len = 1;
             } else {
                 fail(current_line, 3, "Invalid character (%c) [0x%x]",
                      *code.begin, *code.begin);
@@ -644,7 +641,7 @@ void apply_equalities(Line* lines) {
         current_line = current_line->next_line;
     }
 
-    // NOTE(erick): This loop can be avoided if we apply a dictionary compression.
+    // TODO(erick): This loop can be avoided if we apply a dictionary compression.
     uint replacements;
     do {
         replacements = 0;
@@ -720,7 +717,8 @@ string_slice allocate_and_concatenate(string_slice a, string_slice b) {
     return result;
 }
 
-MacroReplaceDict build_macro_replace_dict(Macro* macro, Token* args) {
+MacroReplaceDict build_macro_replace_dict(Line* current_line,
+                                          Macro* macro, Token* args) {
     string_slice comma_slice = make_string_slice(",");
     MacroReplaceDict result = {0};
 
@@ -738,13 +736,14 @@ MacroReplaceDict build_macro_replace_dict(Macro* macro, Token* args) {
     // Filling LOCALs
     //
 
+    char buffer[16];
+    sprintf(buffer, "%03d", macro->n_macro_instantiation);
+    string_slice inst_number = make_string_slice(buffer);
+
     Token* current_local = macro->local_labels;
     for(int i = 0; i < macro->local_labels_count; i++) {
-        char buffer[16];
-        sprintf(buffer, "%03d", macro->n_macro_instantiation);
-        string_slice inst_number = make_string_slice(buffer);
-
-        string_slice label = allocate_and_concatenate(current_local->slice, inst_number);
+        string_slice label = allocate_and_concatenate(current_local->slice,
+                                                      inst_number);
 
         locals[i].key = current_local->slice;
         locals[i].data = new_token(label);
@@ -790,8 +789,7 @@ MacroReplaceDict build_macro_replace_dict(Macro* macro, Token* args) {
             _arg->next_token = NULL;
 
             if(current_arg_index == macro->params_count) {
-                // TODO(erick): Line info here.
-                fail(NULL, 6, "Too many args for macro (%.*s)",
+                fail(current_line, 6, "Too many args for macro (%.*s)",
                      (int) macro->name.len, macro->name.begin);
             }
         } else {
@@ -800,8 +798,7 @@ MacroReplaceDict build_macro_replace_dict(Macro* macro, Token* args) {
     }
 
     if(current_arg_index == macro->params_count) {
-        // TODO(erick): Line info here.
-        fail(NULL, 6, "Too many args for macro (%.*s)",
+        fail(current_line, 6, "Too many args for macro (%.*s)",
              (int) macro->name.len, macro->name.begin);
     }
 
@@ -812,8 +809,7 @@ MacroReplaceDict build_macro_replace_dict(Macro* macro, Token* args) {
     current_arg_index++;
 
     if(current_arg_index != macro->params_count) {
-        // TODO(erick): Line info here.
-        fail(NULL, 6, "Too few args for macro (%.*s)",
+        fail(current_line, 6, "Too few args for macro (%.*s)",
              (int) macro->name.len, macro->name.begin);
     }
 
@@ -975,7 +971,8 @@ void apply_macros(Line* lines) {
 
             Token* macro_args = macro_name_token->next_token;
             // NOTE(erick): build_macro_replace_dict destroys the token argument list.
-            MacroReplaceDict replace_dict = build_macro_replace_dict(macro,
+            MacroReplaceDict replace_dict = build_macro_replace_dict(current_line,
+                                                                     macro,
                                                                      macro_args);
 
             Line* macro_code = instanciate_macro_code(macro, replace_dict);
@@ -1344,6 +1341,9 @@ void output_lst_file(char* file_stem, Line* lines) {
     fclose(file);
 }
 
+// TODO(erick): Intel hex file
+// TODO(erick): Remember ORG lines
+// TODO(erick): Remember last line
 void output_hex_file(char* file_stem) {
     char* filename = (char*) malloc(strlen(file_stem) + strlen(".hex") + 1);
     strcpy(filename, file_stem);
@@ -1354,6 +1354,8 @@ void output_hex_file(char* file_stem) {
 
     fclose(file);
 }
+
+// TODO(erick): Output CES monitor format.
 
 void output_separated_binary_files(char* file_stem) {
     char* filename = (char*) malloc(strlen(file_stem)
