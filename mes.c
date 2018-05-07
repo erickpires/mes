@@ -20,20 +20,16 @@ typedef uint64_t     uint64;
 typedef unsigned int uint;
 
 // TODO(erick):
-//    Macro locals
+//    Case insentiveness
 //    Add comment on macro invocation
 //    Add comment on include
-//    Lines with labels and no code
 //    Bug when the first line of a macro contains a label.(and probably others properties)
 //    Macro inside macro bug
 //    Expressions resolution
-//    Case insentiveness
 //    Do something with line numbers of lines the came from a macro expansion
 //    Error exit codes
 //    Header file
 //    Linear memory allocator
-
-// TODO(erick): Assembler doesn't check for comma between macro params and segfaults
 
 #define MEMORY_SIZE 1024
 #define MAX_OPERAND 0x4000
@@ -52,6 +48,7 @@ typedef enum {
     EQUALITY,
     ORIGIN,
     BLANK,
+    LABEL,
     // NOTE(erick): Unknown can be a Macro Invoke or a 'equ' replacement.
     //  This can only be decided after the 'equ' application.
     UNKNOWN,
@@ -475,13 +472,17 @@ bool is_alloc(Line* line) {
     string_slice dw_slice  = make_string_slice("DW");
 
     Token* first_token = line->tokens;
-
+    Token* maybe_dw_token;
     if(line->has_label) {
         Token* third_token = first_token->next_token->next_token;
-        return (string_slice_equals(third_token->slice, dw_slice));
+        maybe_dw_token = third_token;
     } else {
-        return (string_slice_equals(first_token->slice, dw_slice));
+        maybe_dw_token = first_token;
     }
+
+    if(!maybe_dw_token) { return false; }
+
+    return (string_slice_equals(maybe_dw_token->slice, dw_slice));
 }
 
 bool is_code(Line* line) {
@@ -498,6 +499,8 @@ bool is_code(Line* line) {
     } else {
         maybe_code_token = first_token;
     }
+
+    if(!maybe_code_token) { return false; }
 
     if(string_slice_equals(maybe_code_token->slice, lm_slice) ||
               string_slice_equals(maybe_code_token->slice, em_slice) ||
@@ -553,7 +556,6 @@ void classify_lines(Line* lines) {
             goto LOOP_END;
         }
 
-
         Token* second_token = first_token->next_token;
 
         if(second_token == NULL) {
@@ -578,13 +580,6 @@ void classify_lines(Line* lines) {
 
         if(string_slice_equals(second_token->slice, column_slice)) {
             current_line->has_label = true;
-
-            if(!second_token->next_token) {
-                fail(current_line, 4, "Label with no code (%.*s)",
-                     (int) first_token->slice.len,
-                     first_token->slice.begin);
-            }
-
         } else {
             current_line->has_label = false;
         }
@@ -595,6 +590,8 @@ void classify_lines(Line* lines) {
         } else if(is_code(current_line)) {
             current_line->type = CODE;
             current_line->occupies_space = true;
+        }else if(current_line->has_label && second_token->next_token == NULL) {
+            current_line->type = LABEL;
         } else {
             current_line->type = UNKNOWN;
         }
