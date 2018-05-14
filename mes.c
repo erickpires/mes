@@ -21,7 +21,7 @@ typedef unsigned int uint;
 
 // TODO(erick):
 // BUG: Two different macros can't have the same local label. Otherwise the names
-//      can collide during macro instantiation. The name of the macro should be
+//      can collide during macro expansion. The name of the macro should be
 //      use in the process of creating local labels.
 //    Expressions resolution
 //    Case insentiveness
@@ -656,28 +656,25 @@ void apply_equalities(Line* lines) {
         current_line = current_line->next_line;
     }
 
-    // TODO(erick): This loop can be avoided if we apply a dictionary compression.
-    uint replacements;
-    do {
-        replacements = 0;
-        current_line = lines;
-        while(current_line) {
-            if(current_line->type != EQUALITY) {
-                Token* current_token = current_line->tokens;
-                while(current_token) {
-                    Token* search = search_equ_dict(current_token->slice);
-                    if(search) {
-                        replace_token(current_token, search);
-                        replacements++;
-                    }
-
+    current_line = lines;
+    while(current_line) {
+        if(current_line->type != EQUALITY) {
+            Token* current_token = current_line->tokens;
+            while(current_token) {
+                Token* search = search_equ_dict(current_token->slice);
+                if(search) {
+                    replace_token(current_token, search);
+                } else {
+                    // NOTE(erick): This guarantees that nested qualities
+                    // are going to be replaced.
                     current_token = current_token->next_token;
                 }
             }
-
-            current_line = current_line->next_line;
         }
-    } while(replacements > 0);
+
+        current_line = current_line->next_line;
+    }
+
 }
 
 void resolve_unknowns(Line* lines) {
