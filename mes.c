@@ -32,7 +32,24 @@ typedef unsigned int uint;
 //    Header file
 //    Linear memory allocator
 
+//
+// Error Codes
+//
+#define ARGS_PARSING_ERROR 1
+#define FILE_ERROR         2
+#define INCLUDE_ERROR      3
+#define TOKENIZE_ERROR     4
+#define CLASSIFY_ERROR     5
+#define EQUALITIES_ERROR   6
+#define UNKNOWNS_ERROR     7
+#define MACRO_ERROR        8
+#define ADDRESS_ERROR      9
+#define LABEL_ERROR        10
+#define MACHINE_CODE_ERROR 11
 
+//
+// Constants
+//
 #define MEMORY_SIZE 1024
 #define MAX_OPERAND 0x4000
 
@@ -261,17 +278,17 @@ void add_to_macro_dict(Line* dec_line, string_slice name,
     uint params_count;
     uint locals_count;
     if(!count_comma_separated_tokens(params, &params_count)) {
-        fail(dec_line, 6, "Invalid parameter list.");
+        fail(dec_line, MACRO_ERROR, "Invalid parameter list.");
     }
 
     if(!count_comma_separated_tokens(locals, &locals_count)) {
-        fail(dec_line, 6, "Invalid LOCAL list.");
+        fail(dec_line, MACRO_ERROR, "Invalid LOCAL list.");
     }
 
     Macro macro = {name, params, locals, begin, end, params_count, locals_count, 0};
 
     if(!begin || !end) {
-        fail(dec_line, 6, "Invalid Macro definition: %.*s\n",
+        fail(dec_line, MACRO_ERROR, "Invalid Macro definition: %.*s\n",
              (int) name.len, name.begin);
     }
 
@@ -456,7 +473,7 @@ void tokenize_lines(Line* lines) {
                 token.begin = code.begin;
                 token.len = 1;
             } else {
-                fail(current_line, 3, "Invalid character (%c) [0x%x]",
+                fail(current_line, TOKENIZE_ERROR, "Invalid character (%c) [0x%x]",
                      *code.begin, *code.begin);
             }
 
@@ -638,14 +655,15 @@ void apply_equalities(Line* lines) {
             Token* third_token  = second_token->next_token;
 
             if(!third_token) {
-                fail(current_line, 5, "Invalid 'equ' (%.*s)",
+                fail(current_line, EQUALITIES_ERROR, "Invalid 'equ' (%.*s)",
                     (int) first_token->slice.len,
                      first_token->slice.begin);
             }
 
             if(search_equ_dict(first_token->slice) != NULL) {
-                fail(current_line, 5, "EQU (%.*s) has already been defined",
-                    (int) first_token->slice.len,
+                fail(current_line, EQUALITIES_ERROR,
+                     "EQU (%.*s) has already been defined",
+                     (int) first_token->slice.len,
                      first_token->slice.begin);
             }
 
@@ -801,7 +819,7 @@ MacroReplaceDict build_macro_replace_dict(Line* current_line,
             _arg->next_token = NULL;
 
             if(current_arg_index == macro->params_count) {
-                fail(current_line, 6, "Too many args for macro (%.*s)",
+                fail(current_line, MACRO_ERROR, "Too many args for macro (%.*s)",
                      (int) macro->name.len, macro->name.begin);
             }
         } else {
@@ -810,7 +828,7 @@ MacroReplaceDict build_macro_replace_dict(Line* current_line,
     }
 
     if(current_arg_index == macro->params_count) {
-        fail(current_line, 6, "Too many args for macro (%.*s)",
+        fail(current_line, MACRO_ERROR, "Too many args for macro (%.*s)",
              (int) macro->name.len, macro->name.begin);
     }
 
@@ -821,7 +839,7 @@ MacroReplaceDict build_macro_replace_dict(Line* current_line,
     current_arg_index++;
 
     if(current_arg_index != macro->params_count) {
-        fail(current_line, 6, "Too few args for macro (%.*s)",
+        fail(current_line, MACRO_ERROR, "Too few args for macro (%.*s)",
              (int) macro->name.len, macro->name.begin);
     }
 
@@ -873,7 +891,7 @@ void read_macros(Line* lines) {
             current_line->belongs_to_macro_def = true;
 
             if(!current_line->next_line) {
-                fail(NULL, 6, "Macro with no END: %.*s\n",
+                fail(NULL, MACRO_ERROR, "Macro with no END: %.*s\n",
                      (int) current_macro_name.len,
                      current_macro_name.begin);
             }
@@ -883,7 +901,8 @@ void read_macros(Line* lines) {
                 is_reading_macro = false;
                 current_macro_end = current_line;
                 if(search_macro_dict(current_macro_name) != NULL) {
-                    fail(current_macro_begin, 6, "Double macro definition (%.*s)",
+                    fail(current_macro_begin, MACRO_ERROR,
+                         "Double macro definition (%.*s)",
                          (int) current_macro_name.len,
                          current_macro_name.begin);
                 }
@@ -911,7 +930,7 @@ void read_macros(Line* lines) {
 
                 if(current_line->next_line &&
                    current_line->next_line->type == MACRO_END) {
-                    fail(current_line, 6, "Empty Macro definition (%.*s)",
+                    fail(current_line, MACRO_ERROR, "Empty Macro definition (%.*s)",
                          (int) current_macro_name.len,
                          current_macro_name.begin);
                 }
@@ -924,7 +943,7 @@ void read_macros(Line* lines) {
 
     // NOTE(erick): This should never be reached.
     if(is_reading_macro) {
-        fail(NULL, 6, "Macro with no END: %.*s\n",
+        fail(NULL, MACRO_ERROR, "Macro with no END: %.*s\n",
              (int) current_macro_name.len,
              current_macro_name.begin);
     }
@@ -974,7 +993,7 @@ void apply_macros(Line* lines) {
             string_slice macro_name = macro_name_token->slice;
             Macro* macro = search_macro_dict(macro_name);
             if(!macro) {
-                fail(current_line, 7, "Invoke non-defined Macro (%.*s)",
+                fail(current_line, MACRO_ERROR, "Invoke non-defined Macro (%.*s)",
                      (int) macro_name.len, macro_name.begin);
             }
 
@@ -1026,7 +1045,8 @@ void remove_macros_space_properties(Line* lines) {
             current_line->belongs_to_macro_def = false;
 
             if(current_line->type == MACRO_END) {
-                fail(current_line, 6, "ENDM found with no matching Macro definition");
+                fail(current_line, MACRO_ERROR,
+                     "ENDM found with no matching Macro definition");
             }
 
             if(current_line->type == MACRO_DEF) {
@@ -1134,12 +1154,12 @@ void compute_addresses(Line* lines) {
         if(current_line->type == ORIGIN) {
             Token* value_token = current_line->tokens->next_token;
             if(!value_token) {
-                fail(current_line, 8, "ORG with no value");
+                fail(current_line, ADDRESS_ERROR, "ORG with no value");
             }
 
             uint16 org;
             if(!parse_value(value_token, &org)) {
-                fail(current_line, 8, "Value could not be parsed (%.*s)",
+                fail(current_line, ADDRESS_ERROR, "Value could not be parsed (%.*s)",
                      (int) value_token->slice.len,
                      value_token->slice.begin);
             }
@@ -1161,7 +1181,7 @@ void compute_addresses(Line* lines) {
             Token* label_token = current_line->tokens;
 
             if(search_label_dict(label_token->slice, &ignored)) {
-                fail(current_line, 8, "Double label definition (%.*s)",
+                fail(current_line, ADDRESS_ERROR, "Double label definition (%.*s)",
                      (int) label_token->slice.len,
                      label_token->slice.begin);
             }
@@ -1260,7 +1280,8 @@ void generate_machine_code(Line* lines) {
         if(current_line->occupies_space) {
             uint address = current_line->address;
             if(address >= MEMORY_SIZE) {
-                fail(current_line, 9, "Address of line is greater than the memory");
+                fail(current_line, MACHINE_CODE_ERROR,
+                     "Address of line is greater than the memory");
             }
 
             Token* instruction;
@@ -1271,7 +1292,8 @@ void generate_machine_code(Line* lines) {
             }
 
             if(!instruction) {
-                fail(current_line, 9, "Line does not contain an instruction");
+                fail(current_line, MACHINE_CODE_ERROR,
+                     "Line does not contain an instruction");
             }
 
             Token* operand = instruction->next_token;
@@ -1279,24 +1301,28 @@ void generate_machine_code(Line* lines) {
             uint16 operand_code;
 
             if(!operand) {
-                fail(current_line, 9, "Line does not contain an operand");
+                fail(current_line, MACHINE_CODE_ERROR,
+                     "Line does not contain an operand");
             }
 
             if(!parse_instruction(instruction, &instruction_code)) {
-                fail(current_line, 9,"Line with no valid instruction (%.*s)",
+                fail(current_line, MACHINE_CODE_ERROR,
+                     "Line with no valid instruction (%.*s)",
                      (int) instruction->slice.len,
                      instruction->slice.begin);
             }
 
             if(!parse_value(operand, &operand_code)) {
-                fail(current_line, 9, "No valid operand (%.*s)",
+                fail(current_line, MACHINE_CODE_ERROR,
+                     "No valid operand (%.*s)",
                      (int) operand->slice.len,
                      operand->slice.begin);
             }
 
             if((!string_slice_equals_icase(instruction->slice, dw_slice)) &&
                operand_code >= MAX_OPERAND) {
-                fail(current_line, 9, "operand (%.*s) exceeds 14 bits",
+                fail(current_line, MACHINE_CODE_ERROR,
+                     "operand (%.*s) exceeds 14 bits",
                      (int) operand->slice.len,
                      operand->slice.begin);
             }
@@ -1456,7 +1482,8 @@ void handle_includes(Line* lines) {
 
             FILE* included = fopen(buffer, "r");
             if(!included) {
-                fail(current_line, 10, "Could not found included file: %s\n", buffer);
+                fail(current_line, FILE_ERROR,
+                     "Could not found included file: %s\n", buffer);
             }
 
             char* included_data  = read_entire_file(included);
@@ -1464,7 +1491,8 @@ void handle_includes(Line* lines) {
 
             Line* tmp = included_lines;
             if(!tmp) {
-                fail(current_line, 10, "Cannot include empty file: %s\n", buffer);
+                fail(current_line, INCLUDE_ERROR,
+                     "Cannot include empty file: %s\n", buffer);
             }
 
             while(tmp->next_line) { tmp = tmp->next_line; }
@@ -1522,12 +1550,12 @@ int main(int args_count, char** args_values) {
 
     if(next_assignment) {
         perror("Invalid parameters.\n");
-        print_help_and_exit(-1);
+        print_help_and_exit(ARGS_PARSING_ERROR);
     }
 
     if(!input_filename) {
         perror("No input file specified.\n");
-        print_help_and_exit(1);
+        print_help_and_exit(ARGS_PARSING_ERROR);
     }
 
     if(!output_filename) {
@@ -1543,7 +1571,7 @@ int main(int args_count, char** args_values) {
     FILE* input_file = fopen(input_filename, "r");
     if(!input_file) {
         perror("Could not open input file.\n");
-        exit(2);
+        exit(FILE_ERROR);
     }
 
     char* data = read_entire_file(input_file);
@@ -1557,7 +1585,9 @@ int main(int args_count, char** args_values) {
     classify_lines(lines);
 
     apply_equalities(lines);
+
     resolve_unknowns(lines);
+
     read_macros(lines);
     apply_macros(lines);
     remove_macros_space_properties(lines);
