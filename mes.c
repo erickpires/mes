@@ -20,22 +20,27 @@ typedef uint64_t     uint64;
 typedef unsigned int uint;
 
 // TODO(erick):
-//    Case insentiveness
-//    Macro inside macro bug
+// BUG: Two different macros can't have the same local label. Otherwise the names
+//      can collide during macro instantiation. The name of the macro should be
+//      use in the process of creating local labels.
 //    Expressions resolution
+//    Case insentiveness
 //    Do something with line numbers of lines the came from a macro expansion
+//    Allocate variables in RAM
 //    Better print labels on the .lst file
 //    Error exit codes
+//    Help message
 //    Header file
 //    Linear memory allocator
+
 
 #define MEMORY_SIZE 1024
 #define MAX_OPERAND 0x4000
 
+
 //
 // Data types
 //
-
 typedef enum {
     MACRO_DEF,
     MACRO_END,
@@ -108,11 +113,17 @@ typedef struct {
     uint n_macro_instantiation;
 } Macro;
 
+typedef struct {
+    uint old_origin;
+    uint new_origin;
+} OriginChange;
+
 //
 // Globals
 //
 
-static bool output_hex;
+static bool output_intel_hex;
+static bool output_ces_hex;
 
 // NOTE(erick): Two binary files, one for lower bytes, one for higher bytes.
 static bool output_separated_binaries;
@@ -130,6 +141,10 @@ static usize macro_dict_count = 0;
 static StringUintPair* label_dict = NULL;
 static usize label_dict_capacity = 0;
 static usize label_dict_count = 0;
+
+static OriginChange org_change_list[1024] = {};
+static usize org_change_list_count = 0;
+static uint last_address;
 
 void fail(Line* line, uint exit_code, const char* fmt, ...) {
     va_list var_args;
@@ -1132,6 +1147,10 @@ void compute_addresses(Line* lines) {
                      value_token->slice.begin);
             }
 
+            OriginChange change = {current_address, org};
+            org_change_list[org_change_list_count] = change;
+            org_change_list_count++;
+
             current_address = org;
         }
 
@@ -1159,6 +1178,8 @@ void compute_addresses(Line* lines) {
 
         current_line = current_line->next_line;
     }
+
+    last_address = current_address;
 }
 
 string_slice uint_to_string(uint value) {
@@ -1342,8 +1363,6 @@ void output_lst_file(char* file_stem, Line* lines) {
 }
 
 // TODO(erick): Intel hex file
-// TODO(erick): Remember ORG lines
-// TODO(erick): Remember last line
 void output_hex_file(char* file_stem) {
     char* filename = (char*) malloc(strlen(file_stem) + strlen(".hex") + 1);
     strcpy(filename, file_stem);
@@ -1355,7 +1374,45 @@ void output_hex_file(char* file_stem) {
     fclose(file);
 }
 
-// TODO(erick): Output CES monitor format.
+void output_ces_hex_file(char* file_stem) {
+    char* filename = (char*) malloc(strlen(file_stem) + strlen(".ces.hex") + 1);
+    strcpy(filename, file_stem);
+    strcat(filename, ".ces.hex");
+
+    FILE* file = fopen(filename, "w");
+
+    uint current_begin_address = 0;
+    for (usize org_change_index = 0;
+         org_change_index < org_change_list_count;
+         org_change_index++) {
+        OriginChange current_change = org_change_list[org_change_index];
+
+        uint current_end_address = current_change.old_origin;
+
+        if(current_end_address > current_begin_address) {
+            fprintf(file, "%04X:", current_begin_address);
+            for(uint i = current_begin_address; i < current_end_address; i++) {
+                fprintf(file, " %04X", machine_code[i]);
+            }
+
+            fprintf(file, "\n");
+        }
+
+        current_begin_address = current_change.new_origin;
+    }
+
+    uint current_end_address = last_address;
+    if(current_end_address > current_begin_address) {
+        fprintf(file, "%04X:", current_begin_address);
+        for(uint i = current_begin_address; i < current_end_address; i++) {
+            fprintf(file, " %04X", machine_code[i]);
+        }
+
+        fprintf(file, "\n");
+    }
+
+    fclose(file);
+}
 
 void output_separated_binary_files(char* file_stem) {
     char* filename = (char*) malloc(strlen(file_stem)
@@ -1450,9 +1507,12 @@ int main(int args_count, char** args_values) {
             print_help_and_exit(0);
 
         } else if(strcmp(current_arg, "-H") == 0) {
-            output_hex = true;
+            output_intel_hex = true;
 
-        }else if(strcmp(current_arg, "-B") == 0) {
+        } else if(strcmp(current_arg, "-c") == 0) {
+            output_ces_hex = true;
+
+        } else if(strcmp(current_arg, "-B") == 0) {
             output_separated_binaries = true;
 
         } else if(strcmp(current_arg, "-o") == 0) {
@@ -1512,8 +1572,12 @@ int main(int args_count, char** args_values) {
 
     output_binary_file(output_filename);
     output_lst_file(output_filename, lines);
-    if(output_hex) {
+    if(output_intel_hex) {
         output_hex_file(output_filename);
+    }
+
+    if(output_ces_hex) {
+        output_ces_hex_file(output_filename);
     }
 
     if(output_separated_binaries) {
