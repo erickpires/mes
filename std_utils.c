@@ -1,3 +1,4 @@
+#include <strings.h>
 #include "std_utils.h"
 
 void __fail_assert(const char* expr, const char* file_name, const uint32 line,
@@ -148,6 +149,13 @@ bool string_slice_equals(string_slice a, string_slice b) {
     if(a.len != b.len) { return false; }
 
     bool result = memcmp(a.begin, b.begin, a.len) == 0;
+    return result;
+}
+
+bool string_slice_equals_icase(string_slice a, string_slice b) {
+    if(a.len != b.len) { return false; }
+
+    bool result = strncasecmp(a.begin, b.begin, a.len) == 0;
     return result;
 }
 

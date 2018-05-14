@@ -63,6 +63,8 @@ string_slice make_string_slice(const char* str);
 string_slice make_string_slice_with_len(const char* str, usize len);
 char* string_slice_to_copy_string(string_slice slice);
 bool string_slice_equals(string_slice a, string_slice b);
+bool string_slice_equals_icase(string_slice a, string_slice b);
+
 
 string_slice string_slice_concatenate(char* storage, ...);
 string_slice trim_string_slice(string_slice slice);

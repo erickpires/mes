@@ -24,7 +24,6 @@ typedef unsigned int uint;
 //      can collide during macro expansion. The name of the macro should be
 //      use in the process of creating local labels.
 //    Expressions resolution
-//    Case insentiveness
 //    Do something with line numbers of lines the came from a macro expansion
 //    Allocate variables in RAM
 //    Better print labels on the .lst file
@@ -221,7 +220,7 @@ Token* search_equ_dict(string_slice to_search) {
     Token* result = NULL;
 
     for(int i = 0; i < equ_dict_count; i++) {
-        if(string_slice_equals(to_search, equ_dict[i].key)) {
+        if(string_slice_equals_icase(to_search, equ_dict[i].key)) {
             result = equ_dict[i].data;
             break;
         }
@@ -296,7 +295,7 @@ Macro* search_macro_dict(string_slice to_search) {
     Macro* result = NULL;
 
     for(int i = 0; i < macro_dict_count; i++) {
-        if(string_slice_equals(to_search, macro_dict[i].name)) {
+        if(string_slice_equals_icase(to_search, macro_dict[i].name)) {
             result = macro_dict + i;
             break;
         }
@@ -325,7 +324,7 @@ void add_to_label_dict(string_slice key, uint data) {
 
 bool search_label_dict(string_slice to_search, uint* result) {
     for(int i = 0; i < label_dict_count; i++) {
-        if(string_slice_equals(to_search, label_dict[i].key)) {
+        if(string_slice_equals_icase(to_search, label_dict[i].key)) {
             *result = label_dict[i].data;
             return true;
         }
@@ -492,7 +491,7 @@ bool is_alloc(Line* line) {
 
     if(!maybe_dw_token) { return false; }
 
-    return (string_slice_equals(maybe_dw_token->slice, dw_slice));
+    return (string_slice_equals_icase(maybe_dw_token->slice, dw_slice));
 }
 
 bool is_code(Line* line) {
@@ -512,10 +511,10 @@ bool is_code(Line* line) {
 
     if(!maybe_code_token) { return false; }
 
-    if(string_slice_equals(maybe_code_token->slice, lm_slice) ||
-              string_slice_equals(maybe_code_token->slice, em_slice) ||
-              string_slice_equals(maybe_code_token->slice, sb_slice) ||
-              string_slice_equals(maybe_code_token->slice, dnp_slice)) {
+    if(string_slice_equals_icase(maybe_code_token->slice, lm_slice) ||
+       string_slice_equals_icase(maybe_code_token->slice, em_slice) ||
+       string_slice_equals_icase(maybe_code_token->slice, sb_slice) ||
+       string_slice_equals_icase(maybe_code_token->slice, dnp_slice)) {
 
         return true;
     } else {
@@ -546,19 +545,19 @@ void classify_lines(Line* lines) {
             goto LOOP_END;
         }
 
-        if(string_slice_equals(first_token->slice, org_slice)) {
+        if(string_slice_equals_icase(first_token->slice, org_slice)) {
             current_line->type = ORIGIN;
             current_line->has_label = false;
             current_line->occupies_space = false;
 
             goto LOOP_END;
-        } else if(string_slice_equals(first_token->slice, endm_slice)) {
+        } else if(string_slice_equals_icase(first_token->slice, endm_slice)) {
             current_line->type = MACRO_END;
             current_line->has_label = false;
             current_line->occupies_space = false;
 
             goto LOOP_END;
-        } else if(string_slice_equals(first_token->slice, local_slice)) {
+        } else if(string_slice_equals_icase(first_token->slice, local_slice)) {
             current_line->type = MACRO_LOCALS;
             current_line->has_label = false;
             current_line->occupies_space = false;
@@ -703,7 +702,8 @@ Token* copy_or_replace_tokens(Token* to_copy, MacroReplaceDict replace_dict) {
     while(true) {
         current_token->slice = to_copy->slice;
         for(int i = 0; i < replace_dict.count; i++) {
-            if(string_slice_equals(current_token->slice, replace_dict.data[i].key)) {
+            if(string_slice_equals_icase(current_token->slice,
+                                         replace_dict.data[i].key)) {
                 current_token = replace_token(current_token, replace_dict.data[i].data);
                 break;
             }
@@ -787,8 +787,8 @@ MacroReplaceDict build_macro_replace_dict(Line* current_line,
     uint current_arg_index = 0;
     Token* current_arg_token = args;
     while(args) {
-        if(args->next_token && string_slice_equals(args->next_token->slice,
-                                                 comma_slice)) {
+        if(args->next_token && string_slice_equals_icase(args->next_token->slice,
+                                                       comma_slice)) {
             Token* _arg = args;
             // Add to dict
             params[current_arg_index].data = current_arg_token;
@@ -1223,27 +1223,27 @@ bool parse_instruction(Token* instruction, uint16* result) {
     string_slice sb_slice  = make_string_slice("SB");
     string_slice dnp_slice = make_string_slice("DNP");
 
-    if(string_slice_equals(instruction->slice, dw_slice)) {
+    if(string_slice_equals_icase(instruction->slice, dw_slice)) {
         *result = 0;
         return true;
     }
 
-    if(string_slice_equals(instruction->slice, lm_slice)) {
+    if(string_slice_equals_icase(instruction->slice, lm_slice)) {
         *result = 0x0000;
         return true;
     }
 
-    if(string_slice_equals(instruction->slice, em_slice)) {
+    if(string_slice_equals_icase(instruction->slice, em_slice)) {
         *result = 0x4000;
         return true;
     }
 
-    if(string_slice_equals(instruction->slice, sb_slice)) {
+    if(string_slice_equals_icase(instruction->slice, sb_slice)) {
         *result = 0x8000;
         return true;
     }
 
-    if(string_slice_equals(instruction->slice, dnp_slice)) {
+    if(string_slice_equals_icase(instruction->slice, dnp_slice)) {
         *result = 0xC000;
         return true;
     }
@@ -1294,7 +1294,7 @@ void generate_machine_code(Line* lines) {
                      operand->slice.begin);
             }
 
-            if((!string_slice_equals(instruction->slice, dw_slice)) &&
+            if((!string_slice_equals_icase(instruction->slice, dw_slice)) &&
                operand_code >= MAX_OPERAND) {
                 fail(current_line, 9, "operand (%.*s) exceeds 14 bits",
                      (int) operand->slice.len,
