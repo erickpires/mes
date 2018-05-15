@@ -20,14 +20,10 @@ typedef uint64_t     uint64;
 typedef unsigned int uint;
 
 // TODO(erick):
-// BUG: Two different macros can't have the same local label. Otherwise the names
-//      can collide during macro expansion. The name of the macro should be
-//      use in the process of creating local labels.
 //    Expressions resolution
 //    Do something with line numbers of lines the came from a macro expansion
 //    Allocate variables in RAM
 //    Better print labels on the .lst file
-//    Error exit codes
 //    Help message
 //    Header file
 //    Linear memory allocator
@@ -766,8 +762,9 @@ MacroReplaceDict build_macro_replace_dict(Line* current_line,
     // Filling LOCALs
     //
 
-    char buffer[16];
-    sprintf(buffer, "%03d", macro->n_macro_instantiation);
+    char buffer[128];
+    sprintf(buffer, "%03d_at_%.*s", macro->n_macro_instantiation,
+            (int) macro->name.len, macro->name.begin);
     string_slice inst_number = make_string_slice(buffer);
 
     Token* current_local = macro->local_labels;
