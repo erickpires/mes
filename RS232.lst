@@ -1,0 +1,184 @@
+LST file
+
+; #include basic.asm
+0000:      NGT equ SB 0000h ; T = 0 - T, não pede emprestado se T for 0
+0000:      INV equ SB 0007h ;	T = T\, não pede emprestado;
+
+0000:      ORG 0 
+0000: 0000 Zero : DW 0 
+0001: 0001 Um : DW 1 
+0002: 0002 Dois : DW 2 
+0003: 0003 Tres : DW 3 
+0004: 0007 Sete : DW 7 
+0005: 000f Quinze : DW 15 
+0006: 8000 H8000 : DW 8000h 
+0007: ffff HFFFF : DW 0FFFFh ; menos 1
+
+0008:      IniRam equ 400h 
+
+
+0008:      Aux1 equ 400h 
+0008:      Aux2 equ 401h 
+0008:      Aux3 equ 402h 
+0008:      Aux4 equ 403h 
+0008:      ES equ 404h 
+0008:      TempoMeioBit equ 9600 
+0008:      x8000 equ 0006h 
+0008:      xFFFF equ 0007h 
+0008:      XFFFF equ 0007h 
+0008:      xFF equ 0005h 
+
+0008: 0005 Cinco : DW 5 
+0009: 0008 Oito : DW 8 
+000a: ffff x7FFF : DW 7FFFFh 
+
+000b:      Duplica MACRO x ; // T = 2 * x ( 6 ciclos )
+000b:      LM x 
+000b:      SB Zero ; T = 0 - x;
+000b:      SB x ; T = x - T; // T = x - ( 0 - x );
+000b:      ENDM 
+
+000b:      InvOrdBits MACRO x , Peso , y 
+000b:      LOCAL Inv1Bit , Bit0 
+000b:      LM Zero 
+000b:      EM y ; y = 0;
+000b:      LM Um 
+000b:      EM Peso ; Peso = 1;
+000b:      Inv1Bit : LM x ; Repete {
+000b:      SB x7FFF ;    T = 0x7FFF - x; // pede se x > 0x7FFF
+000b:      DNP Bit0 ;    Se pede ( x >= 0x8000 )
+000b:      LM Peso 
+000b:      SB Zero 
+000b:      SB y 
+000b:      EM y ;	y += Peso;
+000b:      Bit0 : Duplica x 
+000b:      EM x ;    x = 2 * x;
+000b:      Duplica Peso 
+000b:      EM Peso ;    Peso = 2 * Peso;
+000b:      SB Quinze ;    T = 0xFF - Peso;  // pede se Peso > 0xFF
+000b:      DNP Inv1Bit ;     } enquanto ( Peso <= 0xFF )
+000b:      ENDM 
+
+000b:      Espera MACRO ; // Duração da espera: 7 * T + 3 ciclos de relógio
+000b:      LOCAL Esp , FimEsp 
+000b:      Esp : SB Zero ; Enquanto ( T )	// 0 - T, pede se T != 0
+000b:      DNP FimEsp 
+000b:      SB HFFFF ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+000b:      DNP Esp 
+000b:      FimEsp : 
+000b:      ENDM 
+
+
+000b: 4401 EscTTY : EM 401h ; EscTTy ( Carac : Aux1 )
+; InvOrdBits 400h , 402h , 403h
+000c: 0000 LM 0000h 
+000d: 4403 EM 403h ; y = 0;
+000e: 0001 LM 0001h 
+000f: 4402 EM 402h ; Peso = 1;
+0010: 0400 Inv1Bit000 : LM 400h ; Repete {
+0011: 800a SB 000ah ;    T = 0x7FFF - x; // pede se x > 0x7FFF
+0012: c017 DNP 0017h ;    Se pede ( x >= 0x8000 )
+0013: 0402 LM 402h 
+0014: 8000 SB 0000h 
+0015: 8403 SB 403h 
+0016: 4403 EM 403h ;	y += Peso;
+0017:      Bit0000 : Duplica 400h ; Duplica 400h
+0017: 0400 LM 400h 
+0018: 8000 SB 0000h ; T = 0 - x;
+0019: 8400 SB 400h ; T = x - T; // T = x - ( 0 - x );
+001a: 4400 EM 400h ;    x = 2 * x;
+; Duplica 402h
+001b: 0402 LM 402h 
+001c: 8000 SB 0000h ; T = 0 - x;
+001d: 8402 SB 402h ; T = x - T; // T = x - ( 0 - x );
+001e: 4402 EM 402h ;    Peso = 2 * Peso;
+001f: 8005 SB 0005h ;    T = 0xFF - Peso;  // pede se Peso > 0xFF
+0020: c010 DNP 0010h ;     } enquanto ( Peso <= 0xFF )
+0021: 0001 LM 0001h 
+0022: 4402 EM 402h ; Aux3 = 1;	// contador de bits
+0023: 4404 EM 404h ; ES = 0;   // Início do start bit
+0024:      Env1Bit : ; repete {				// ciclos:
+; Duplica 9600;     T = Duplica ( TempoMeioBit );	// 6
+0024: 2580 LM 9600 
+0025: 8000 SB 0000h ; T = 0 - x;
+0026: a580 SB 9600 ; T = x - T; // T = x - ( 0 - x );
+0027: 8008 SB 0008h ;					// 2
+0028: 8000 SB 0000h ;     T = T - 5;			// 2
+; Espera;     Espera ( T );         // TempoMeioBit * 14 - 32
+0029: 8000 Esp000 : SB 0000h ; Enquanto ( T )	// 0 - T, pede se T != 0
+002a: c02d DNP 002dh 
+002b: 8007 SB 0007h ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+002c: c029 DNP 0029h 
+002d:      FimEsp000 : 
+; Duplica 403h;     T = 2 * Aux4;			// 6
+002d: 0403 LM 403h 
+002e: 8000 SB 0000h ; T = 0 - x;
+002f: 8403 SB 403h ; T = x - T; // T = x - ( 0 - x );
+0030: 4403 EM 403h ;     Aux4 = T;			//	^
+0031: 4404 EM 404h ;     ES = T;  // envia o bit 8
+0032: 0007 LM 0007h ;					//	12
+0033: 8402 SB 402h 
+0034: 4402 EM 402h ;     Aux3++;
+0035: 8009 SB 0009h ;     T = 8 - Aux3; // pede se Aux3 > 8;	V
+0036: c024 DNP 0024h ;	} enquanto ( Aux3 <= 8 );	// 1
+0037: 0007 LM 0007h ;				// Total:  TempoMeioBit * 14 - 3
+0038: 4404 EM 404h ; ES = 1;	// Início do stop bit
+; Duplica 9600
+0039: 2580 LM 9600 
+003a: 8000 SB 0000h ; T = 0 - x;
+003b: a580 SB 9600 ; T = x - T; // T = x - ( 0 - x );
+; Espera; Espera ( Duplica ( TempoMeioBit )
+003c: 8000 Esp001 : SB 0000h ; Enquanto ( T )	// 0 - T, pede se T != 0
+003d: c040 DNP 0040h 
+003e: 8007 SB 0007h ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+003f: c03c DNP 003ch 
+0040:      FimEsp001 : 
+0040: 8007 SB 0007h 
+0041: c401 DNP 401h 
+
+0042: 4401 LeTTY : EM 401h 
+0043: 0005 LM 0005h 
+0044: 4400 EM 400h ; Aux1 = 0xFF;	// byte recebido
+0045: 0001 LM 0001h 
+0046: 4402 EM 402h ; Aux3 = 1;	// Peso do bit
+0047: 0006 EspIni : LM 0006h ; repete { repete
+0048: 8404 SB 404h ;	T = ES - 0x8000;	// pede se ES < 0x8000
+0049: c047 DNP 0047h ;		enquanto ( T >= 0x8000 );
+004a: 2580 LM 9600 
+; Espera;      Espera ( TempoMeioBit );
+004b: 8000 Esp002 : SB 0000h ; Enquanto ( T )	// 0 - T, pede se T != 0
+004c: c04f DNP 004fh 
+004d: 8007 SB 0007h ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+004e: c04b DNP 004bh 
+004f:      FimEsp002 : 
+004f: 0006 LM 0006h 
+0050: 8404 SB 404h ;      T = ES - 0x8000;	// pede se ES < 0x8000
+0051: c047 DNP 0047h ;    } enquanto ( T >= 0x8000 );
+0052:      Rec1Bit : ; repete {
+; Duplica 9600
+0052: 2580 LM 9600 
+0053: 8000 SB 0000h ; T = 0 - x;
+0054: a580 SB 9600 ; T = x - T; // T = x - ( 0 - x );
+; Espera;	Espera ( DuplicaTempoMeioBit );
+0055: 8000 Esp003 : SB 0000h ; Enquanto ( T )	// 0 - T, pede se T != 0
+0056: c059 DNP 0059h 
+0057: 8007 SB 0007h ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+0058: c055 DNP 0055h 
+0059:      FimEsp003 : 
+0059: 0006 LM 0006h 
+005a: 8404 SB 404h ;	// T = ES - 0x8000, pede se ES < 0x8000
+005b: c052 DNP 0052h ;	Se ( ES < 0x8000 )
+005c: 0402 LM 402h ;		// peso
+005d: 8400 SB 400h 
+005e: 4400 EM 400h ;		Aux1 -= Aux3;
+; Duplica 402h
+005f: 0402 LM 402h 
+0060: 8000 SB 0000h ; T = 0 - x;
+0061: 8402 SB 402h ; T = x - T; // T = x - ( 0 - x );
+0062: 4402 EM 402h ;		Aux3 = Aux3 * 2;
+0063: 8005 SB 0005h ;		// T = 0xFF - Aux3, pede se Aux3 > 0xFF
+0064: c052 DNP 0052h ;     } enquanto ( Aux3 <= 0xFF );
+0065: 8007 SB 0007h 
+0066: 0400 LM 400h 
+0067: c401 DNP 401h 
+

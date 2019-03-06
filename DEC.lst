@@ -1,6 +1,7 @@
 LST file
 
 ; Meu programa
+; #include basic.asm
 0000:      NGT equ SB 0000h ; T = 0 - T, não pede emprestado se T for 0
 0000:      INV equ SB 0007h ;	T = T\, não pede emprestado;
 
@@ -15,6 +16,9 @@ LST file
 0007: ffff HFFFF : DW 0FFFFh ; menos 1
 
 0008:      IniRam equ 400h 
+0008:      Sai equ 3FFEh 
+0008:      Ent equ 3FFFh 
+
 
 0008:      Halt MACRO 
 0008:      LM Zero 
@@ -24,15 +28,107 @@ LST file
 
 000f:      ORG 15 
 
+000f:      CP MACRO D , F ; 4.Copia F para D: T = F, Pede emprestado não é alterado
+000f:      LM F 
+000f:      EM D 
+000f:      ENDM 
+
+000f:      LmInv MACRO Data 
+000f:      LM Data 
+000f:      SB HFFFF 
+000f:      ENDM 
+
+000f:      TROCA MACRO OP0 , OP1 , TMP ; 16.Troca os valores de OP0 e OP1 usando variavel TMP
+000f:      LM OP0 ;   T recebe o valor original de OP0, não altera o pede
+000f:      EM TMP ; TMP = OP0
+000f:      LM OP1 
+000f:      EM OP0 ; OP0 = OP1
+000f:      LM TMP 
+000f:      EM OP1 ; OP1 = TMP
+000f:      ENDM 
+
+000f:      Espera MACRO ; // Duração da espera: 7 * T + 3 ciclos de relógio
+000f:      LOCAL Esp , FimEsp 
+000f:      Esp : SB Zero ; Enquanto ( T )	// 0 - T, pede se T != 0
+000f:      DNP FimEsp 
+000f:      SB HFFFF ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+000f:      DNP Esp 
+000f:      FimEsp : 
+000f:      ENDM 
+
+000f:      EspSai MACRO 
+000f:      LOCAL Espe , Fin 
+000f:      Espe : 
+000f:      LM 3FFEh 
+000f:      SB Zero 
+000f:      DNP Fin 
+000f:      SB HFFFF 
+000f:      DNP Espe 
+000f:      Fin : 
+000f:      ENDM 
+
+
 000f:      Var1 equ IniRam 
-000f: 0005 LM 0005h 
-0010: 4400 Loop : EM 400h 
-0011: 0001 LM 0001h 
-0012: 8400 SB 400h 
-0013: c010 DNP 0010h 
-0014: 0000 LM 0000h 
-0015: 8000 SB 0000h 
-0016: c016 DNP 0016h 
-0017: 0004 LM 0004h 
-0018: 4400 EM 400h 
+000f:      Var2 equ 401h ; IniRam + 1
+000f:      Var3 equ 402h ; IniRam + 2
+
+000f: 0030 CharZero : DW 30h 
+
+0010: 0005 LM 0005h 
+0011: 4400 Loop : EM 400h 
+0012: 8000 SB 0000h 
+0013: 800f SB 000fh 
+0014: 7ffe EM 3FFEh 
+; EspSai
+0015:      Espe000_at_EspSai : 
+0015: 3ffe LM 3FFEh 
+0016: 8000 SB 0000h 
+0017: c01a DNP 001ah 
+0018: 8007 SB 0007h 
+0019: c015 DNP 0015h 
+001a:      Fin000_at_EspSai : 
+001a: 0001 LM 0001h 
+001b: 8400 SB 400h 
+001c: c011 DNP 0011h 
+; Halt
+001d: 0000 LM 0000h 
+001e: 8000 SB 0000h 
+001f: c01f DNP 001fh 
+
+0020: 0004 LM 0004h 
+0021: 4400 EM 400h 
+
+; CP 401h , HFFFF
+0022: 0007 LM 0007h 
+0023: 4401 EM 401h 
+
+; LmInv Sete
+0024: 0004 LM 0004h 
+0025: 8007 SB 0007h 
+; TROCA 400h , 401h , 402h
+0026: 0400 LM 400h ;   T recebe o valor original de OP0, não altera o pede
+0027: 4402 EM 402h ; TMP = OP0
+0028: 0401 LM 401h 
+0029: 4400 EM 400h ; OP0 = OP1
+002a: 0402 LM 402h 
+002b: 4401 EM 401h ; OP1 = TMP
+; Espera
+002c: 8000 Esp000_at_Espera : SB 0000h ; Enquanto ( T )	// 0 - T, pede se T != 0
+002d: c030 DNP 0030h 
+002e: 8007 SB 0007h ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+002f: c02c DNP 002ch 
+0030:      FimEsp000_at_Espera : 
+; TROCA 401h , 402h , 400h
+0030: 0401 LM 401h ;   T recebe o valor original de OP0, não altera o pede
+0031: 4400 EM 400h ; TMP = OP0
+0032: 0402 LM 402h 
+0033: 4401 EM 401h ; OP0 = OP1
+0034: 0400 LM 400h 
+0035: 4402 EM 402h ; OP1 = TMP
+; Espera
+0036: 8000 Esp001_at_Espera : SB 0000h ; Enquanto ( T )	// 0 - T, pede se T != 0
+0037: c03a DNP 003ah 
+0038: 8007 SB 0007h ;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+0039: c036 DNP 0036h 
+003a:      FimEsp001_at_Espera : 
 

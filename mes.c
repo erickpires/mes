@@ -46,7 +46,7 @@ typedef unsigned int uint;
 //
 // Constants
 //
-#define MEMORY_SIZE 1024
+#define MEMORY_SIZE (64 * 1024)
 #define MAX_OPERAND 0x4000
 
 

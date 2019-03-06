@@ -1,18 +1,5 @@
 ; Meu programa
-NGT     equ     SB Zero ; T = 0 - T, não pede emprestado se T for 0
-INV     equ     SB HFFFF;	T = T\, não pede emprestado;
-
-      ORG 0
-Zero: DW 0
-Um:   DW 1
-Dois: DW 2
-Tres: DW 3
-Sete: DW 7
-Quinze: DW 15
-H8000:  DW 8000h
-HFFFF:  DW 0FFFFh               ; menos 1
-
-IniRam equ 400h
+#include basic.asm
 
 Halt MACRO
      LM Zero
@@ -22,12 +9,70 @@ Halt MACRO
 
     ORG 15
 
-      Var1 equ IniRam
+CP	MACRO	D,F	; 4.Copia F para D: T = F, Pede emprestado não é alterado
+    LM	F
+    EM	D
+    ENDM
+
+LmInv MACRO Data
+      LM Data
+      INV
+      ENDM
+
+TROCA MACRO	OP0,OP1,TMP	; 16.Troca os valores de OP0 e OP1 usando variavel TMP
+      LM	OP0		;   T recebe o valor original de OP0, não altera o pede
+      EM	TMP	; TMP = OP0
+      LM	OP1
+      EM	OP0	; OP0 = OP1
+      LM	TMP
+      EM	OP1	; OP1 = TMP
+      ENDM
+
+Espera	MACRO	; // Duração da espera: 7 * T + 3 ciclos de relógio
+        LOCAL	Esp, FimEsp
+Esp:	SB	Zero	; Enquanto ( T )	// 0 - T, pede se T != 0
+        DNP	FimEsp
+        SB	HFFFF	;   T = -1 - ( 0 - T );	// T = T - 1, nunca há pede
+        DNP	Esp
+FimEsp:
+        ENDM
+
+    EspSai MACRO
+    LOCAL Espe,Fin
+Espe:
+        LM Sai
+        SB Zero
+        DNP Fin
+        INV
+        DNP Espe
+Fin:
+        ENDM
+
+
+    Var1 equ IniRam
+    Var2 equ 401h               ; IniRam + 1
+    Var3 equ 402h               ; IniRam + 2
+
+CharZero:   DW 30h
+
       LM Quinze
 Loop: EM Var1
+      NGT
+      SB CharZero
+      EM Sai
+      EspSai
       LM Um
       SB Var1
       DNP Loop
       Halt
+
       LM Sete
-      EM IniRam
+      EM Iniram
+
+      CP Var2, HFFFF
+
+      LmInv Sete
+      TROCA Var1,Var2, Var3
+      Espera
+      TROCA Var2, Var3, Var1
+      Espera
