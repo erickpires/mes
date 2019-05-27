@@ -1,1 +1,1 @@
-gcc src/mes.c src/std_utils.c -o mes.exe -Wall
+gcc src/mes.c src/mes_output.c src/mes_utils.c src/std_string.c -o mes.exe -Wall

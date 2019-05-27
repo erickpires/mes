@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <alloca.h>
 
-#include "std_utils.h"
+#include "mes.h"
+#include "mes_utils.h"
+#include "std_string.h"
 
 typedef intptr_t isize;
 typedef int8_t   int8;
@@ -26,108 +28,7 @@ typedef unsigned int uint;
 //    Better print labels on the .lst file
 //    Help message
 //    Header file
-
-//
-// Error Codes
-//
-#define ARGS_PARSING_ERROR 1
-#define FILE_ERROR         2
-#define INCLUDE_ERROR      3
-#define TOKENIZE_ERROR     4
-#define CLASSIFY_ERROR     5
-#define EQUALITIES_ERROR   6
-#define UNKNOWNS_ERROR     7
-#define MACRO_ERROR        8
-#define ADDRESS_ERROR      9
-#define LABEL_ERROR        10
-#define MACHINE_CODE_ERROR 11
-
-//
-// Constants
-//
-#define MEMORY_SIZE (64 * 1024)
-#define MAX_OPERAND 0x4000
-
-
-//
-// Data types
-//
-typedef enum {
-    MACRO_DEF,
-    MACRO_END,
-    MACRO_INVOKE,
-    MACRO_LOCALS,
-    CODE,
-    ALLOC,
-    EQUALITY,
-    ORIGIN,
-    BLANK,
-    LABEL,
-    // NOTE(erick): Unknown can be a Macro Invoke or a 'equ' replacement.
-    //  This can only be decided after the 'equ' application.
-    UNKNOWN,
-} LineType;
-
-typedef struct __Token {
-    struct __Token* next_token;
-    string_slice slice;
-} Token;
-
-typedef struct __Line {
-    struct __Line* next_line;
-
-    Token* tokens;
-    union {
-        string_slice comment;
-        string_slice line_content;
-    };
-
-    LineType type;
-
-    bool occupies_space;
-    bool has_label;
-    bool belongs_to_macro_def;
-
-    string_slice file_name;
-    uint line_number;
-
-    uint address;
-    uint16 memory_data;
-} Line;
-
-typedef struct {
-    string_slice key;
-    Token* data;
-} StringTokenPair;
-
-typedef struct {
-    string_slice key;
-    uint data;
-} StringUintPair;
-
-typedef struct {
-    StringTokenPair* data;
-    usize count;
-} MacroReplaceDict;
-
-typedef struct {
-    string_slice name;
-    Token* params;
-    Token* local_labels;
-
-    Line* begin;
-    Line* end;
-
-    uint params_count;
-    uint local_labels_count;
-
-    uint n_macro_instantiation;
-} Macro;
-
-typedef struct {
-    uint old_origin;
-    uint new_origin;
-} OriginChange;
+//    Intel hex file
 
 //
 // Globals
@@ -139,7 +40,8 @@ static bool output_ces_hex;
 // NOTE(erick): Two binary files, one for lower bytes, one for higher bytes.
 static bool output_separated_binaries;
 
-static uint16 machine_code[MEMORY_SIZE];
+// TODO(erick): Machine code should not be a global.
+uint16 machine_code[MEMORY_SIZE];
 
 static StringTokenPair* equ_dict = NULL;
 static usize equ_dict_capacity = 0;
@@ -153,60 +55,14 @@ static StringUintPair* label_dict = NULL;
 static usize label_dict_capacity = 0;
 static usize label_dict_count = 0;
 
-static OriginChange org_change_list[1024] = {};
-static usize org_change_list_count = 0;
-static uint last_address;
-
-void fail(Line* line, uint exit_code, const char* fmt, ...) {
-    va_list var_args;
-    va_start(var_args, fmt);
-
-    fprintf(stderr, "\n\n");
-
-    // TODO(erick): Add some colors
-    if(line) {
-        fprintf(stderr, "[ERROR] %.*s:%d: ",
-                (int) line->file_name.len,
-                line->file_name.begin,
-                line->line_number);
-    } else {
-        fprintf(stderr, "[ERROR]: ");
-    }
-
-    vfprintf(stderr, fmt, var_args);
-    fprintf(stderr, "\n");
-
-    va_end(var_args);
-    exit(exit_code);
-}
+// TODO(erick): These variables should not be globals.
+OriginChange org_change_list[1024] = {};
+usize org_change_list_count = 0;
+uint last_address;
 
 void print_help_and_exit(int status) {
     printf("HELP\n");
     exit(status);
-}
-
-char* read_entire_file(FILE* file) {
-    usize capacity = 4;
-    usize used = 0;
-
-    char* result = (char*) malloc(capacity);
-    while(true) {
-        int read = fgetc(file);
-        if(read == EOF) {
-            result[used] = '\0';
-            break;
-        }
-
-        if(used >= capacity - 2) {
-            capacity *= 2;
-            result = (char*) realloc(result, capacity);
-        }
-
-        result[used] = (char) read;
-        used++;
-    }
-
-    return result;
 }
 
 
@@ -378,14 +234,6 @@ Line* divide_in_lines(char* data, string_slice filename) {
     }
 
     return result;
-}
-
-bool is_number(char c) {
-    return (c >= '0' && c <= '9');
-}
-
-bool is_alpha(char c) {
-    return ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
 }
 
 string_slice get_number(string_slice slice) {
@@ -1062,89 +910,6 @@ void remove_macros_space_properties(Line* lines) {
     }
 }
 
-bool is_number_token(Token* token) {
-    string_slice slice = token->slice;
-
-    for(int i = 0; i < slice.len - 1; i++) {
-        if((slice.begin[i] < '0' || slice.begin[i] > '9') &&
-           (slice.begin[i] < 'a' || slice.begin[i] > 'f') &&
-           (slice.begin[i] < 'A' || slice.begin[i] > 'F')) {
-            return false;
-        }
-    }
-
-    char last_char = slice.begin[slice.len - 1];
-    if(last_char >= '0' && last_char <= '9') {
-        return true;
-    }
-
-    if(last_char == 'h' || last_char == 'b') {
-        return true;
-    }
-
-    return false;
-}
-
-uint16 parse_decimal(string_slice slice) {
-    char buffer[16];
-    // NOTE(erick): slice.begin is probably not null-terminated;
-    snprintf(buffer, 16, "%.*s", (int) slice.len, slice.begin);
-
-    return atoi(buffer);
-}
-
-uint16 parse_hex(string_slice slice) {
-    uint16 result = 0;
-    for(int i = 0; i < slice.len; i++) {
-        uint8 current_digit;
-        if(slice.begin[i] >= '0' && slice.begin[i] <= '9') {
-            current_digit = slice.begin[i] - '0';
-        } else if(slice.begin[i] >= 'a' && slice.begin[i] <= 'f') {
-            current_digit = 10 + slice.begin[i] - 'a';
-        } else {
-            current_digit = 10 + slice.begin[i] - 'A';
-        }
-
-        result = 16 * result + current_digit;
-    }
-
-    return result;
-}
-
-uint16 parse_binary(string_slice slice) {
-    uint16 result = 0;
-    for(int i = 0; i < slice.len; i++) {
-        uint current_digit = 1;
-        if(slice.begin[i] == '0') { current_digit = 0; }
-
-        result = 2 * result + current_digit;
-    }
-
-    return result;
-}
-
-bool parse_value(Token* operand, uint16* result) {
-    if(!is_number_token(operand)) {
-        return false;
-    }
-
-    string_slice operand_slice = operand->slice;
-    bool is_hex    = operand_slice.begin[operand_slice.len - 1] == 'h';
-    bool is_binary = operand_slice.begin[operand_slice.len - 1] == 'b';
-
-    if(is_hex) {
-        operand_slice.len -= 1;
-        *result = parse_hex(operand_slice);
-    } else if(is_binary) {
-        operand_slice.len -= 1;
-        *result = parse_binary(operand_slice);
-    } else {
-        *result = parse_decimal(operand_slice);
-    }
-
-    return true;
-}
-
 void compute_addresses(Line* lines) {
     Line* current_line = lines;
 
@@ -1201,12 +966,6 @@ void compute_addresses(Line* lines) {
     last_address = current_address;
 }
 
-string_slice uint_to_string(uint value) {
-    char* mem = (char*) malloc(8);
-    sprintf(mem, "%04xh", value);
-    return make_string_slice(mem);
-}
-
 void propagate_labels(Line* lines) {
     Line* current_line = lines;
 
@@ -1236,41 +995,6 @@ void propagate_labels(Line* lines) {
 
         current_line = current_line->next_line;
     }
-}
-
-bool parse_instruction(Token* instruction, uint16* result) {
-    string_slice dw_slice  = make_string_slice("DW");
-    string_slice lm_slice  = make_string_slice("LM");
-    string_slice em_slice  = make_string_slice("EM");
-    string_slice sb_slice  = make_string_slice("SB");
-    string_slice dnp_slice = make_string_slice("DNP");
-
-    if(string_slice_equals_icase(instruction->slice, dw_slice)) {
-        *result = 0;
-        return true;
-    }
-
-    if(string_slice_equals_icase(instruction->slice, lm_slice)) {
-        *result = 0x0000;
-        return true;
-    }
-
-    if(string_slice_equals_icase(instruction->slice, em_slice)) {
-        *result = 0x4000;
-        return true;
-    }
-
-    if(string_slice_equals_icase(instruction->slice, sb_slice)) {
-        *result = 0x8000;
-        return true;
-    }
-
-    if(string_slice_equals_icase(instruction->slice, dnp_slice)) {
-        *result = 0xC000;
-        return true;
-    }
-
-    return false;
 }
 
 void generate_machine_code(Line* lines) {
@@ -1335,133 +1059,6 @@ void generate_machine_code(Line* lines) {
 
         current_line = current_line->next_line;
     }
-}
-
-void output_binary_file(char* file_stem) {
-    char* filename = (char*) malloc(strlen(file_stem) + strlen(".bin") + 1);
-    strcpy(filename, file_stem);
-    strcat(filename, ".bin");
-
-    FILE* file = fopen(filename, "wb");
-
-    for(usize mem_index = 0; mem_index < MEMORY_SIZE; mem_index++) {
-        uint8 lower_byte = machine_code[mem_index] & 0xFF;
-        uint8 upper_byte = machine_code[mem_index] >> 8;
-
-        fwrite(&upper_byte, 1, 1, file);
-        fwrite(&lower_byte, 1, 1, file);
-    }
-
-    fclose(file);
-}
-
-void output_lst_file(char* file_stem, Line* lines) {
-    char* filename = (char*) malloc(strlen(file_stem) + strlen(".lst") + 1);
-    strcpy(filename, file_stem);
-    strcat(filename, ".lst");
-
-    FILE* file = fopen(filename, "w");
-    fprintf(file, "LST file\n\n");
-
-    while(lines) {
-        if(lines->type != BLANK) {
-            fprintf(file, "%04x: ", lines->address);
-            if(lines->occupies_space) {
-                fprintf(file, "%04x ", lines->memory_data);
-            } else {
-                fprintf(file, "     ");
-            }
-
-            Token* token = lines->tokens;
-            while(token) {
-                fprintf(file, "%.*s ", (int) token->slice.len, token->slice.begin);
-                token = token->next_token;
-            }
-        }
-
-        fprintf(file, "%.*s\n", (int) lines->comment.len, lines->comment.begin);
-
-        lines = lines->next_line;
-    }
-
-    fclose(file);
-}
-
-// TODO(erick): Intel hex file
-void output_hex_file(char* file_stem) {
-    char* filename = (char*) malloc(strlen(file_stem) + strlen(".hex") + 1);
-    strcpy(filename, file_stem);
-    strcat(filename, ".hex");
-
-    FILE* file = fopen(filename, "w");
-    fprintf(file, "HEX file\n");
-
-    fclose(file);
-}
-
-void output_ces_hex_file(char* file_stem) {
-    char* filename = (char*) malloc(strlen(file_stem) + strlen(".ces.hex") + 1);
-    strcpy(filename, file_stem);
-    strcat(filename, ".ces.hex");
-
-    FILE* file = fopen(filename, "w");
-
-    uint current_begin_address = 0;
-    for (usize org_change_index = 0;
-         org_change_index < org_change_list_count;
-         org_change_index++) {
-        OriginChange current_change = org_change_list[org_change_index];
-
-        uint current_end_address = current_change.old_origin;
-
-        if(current_end_address > current_begin_address) {
-            fprintf(file, "%04X:", current_begin_address);
-            for(uint i = current_begin_address; i < current_end_address; i++) {
-                fprintf(file, " %04X", machine_code[i]);
-            }
-
-            fprintf(file, "\n");
-        }
-
-        current_begin_address = current_change.new_origin;
-    }
-
-    uint current_end_address = last_address;
-    if(current_end_address > current_begin_address) {
-        fprintf(file, "%04X:", current_begin_address);
-        for(uint i = current_begin_address; i < current_end_address; i++) {
-            fprintf(file, " %04X", machine_code[i]);
-        }
-
-        fprintf(file, "\n");
-    }
-
-    fclose(file);
-}
-
-void output_separated_binary_files(char* file_stem) {
-    char* filename = (char*) malloc(strlen(file_stem)
-                                    + strlen(".1.bin") + 1);
-    strcpy(filename, file_stem);
-    strcat(filename, ".1.bin");
-
-    FILE* file1 = fopen(filename, "wb");
-
-    strcpy(filename, file_stem);
-    strcat(filename, ".2.bin");
-
-    FILE* file2 = fopen(filename, "wb");
-
-    for(usize mem_index = 0; mem_index < MEMORY_SIZE; mem_index++) {
-        uint8 lower_byte = machine_code[mem_index] & 0xFF;
-        uint8 upper_byte = machine_code[mem_index] >> 8;
-
-        fwrite(&lower_byte, 1, 1, file1);
-        fwrite(&upper_byte, 1, 1, file2);
-    }
-
-    fclose(file1);
-    fclose(file2);
 }
 
 void handle_includes(Line* lines) {
