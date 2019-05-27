@@ -54,6 +54,6 @@ typedef struct {
     usize count;
 } RdpExpression;
 
-uint parse_expression(RdpToken* expression, usize expression_size, RdpError* err);
+uint parse_expression(RdpExpression* expr, RdpError* err);
 
 #endif

@@ -7,6 +7,7 @@
 #include "mes.h"
 #include "mes_utils.h"
 #include "std_string.h"
+#include "expression_rdp.h"
 
 typedef intptr_t isize;
 typedef int8_t   int8;
@@ -29,6 +30,7 @@ typedef unsigned int uint;
 //    Help message
 //    Header file
 //    Intel hex file
+//    Use a verbose flag to decide if [NOTEs] should be printed
 
 //
 // Globals
@@ -278,6 +280,10 @@ Token* new_token(string_slice slice) {
     return result;
 }
 
+bool is_operator_char(char c) {
+    return (c == '(' || c == ')' || c == '+' || c == '-' || c == '*' || c == '/');
+}
+
 void tokenize_lines(Line* lines) {
     Line* current_line = lines;
     while(current_line) {
@@ -313,12 +319,7 @@ void tokenize_lines(Line* lines) {
             } else if(*code.begin == ':' ||
                       *code.begin == '$' ||
                       *code.begin == ',' ||
-                      *code.begin == '(' ||
-                      *code.begin == ')' ||
-                      *code.begin == '+' ||
-                      *code.begin == '-' ||
-                      *code.begin == '*' ||
-                      *code.begin == '/') {
+                      is_operator_char(*code.begin)) {
                 token.begin = code.begin;
                 token.len = 1;
             } else {
@@ -997,65 +998,179 @@ void propagate_labels(Line* lines) {
     }
 }
 
+Token* get_instruction_token(Line* line) {
+    if(line->has_label) {
+        return line->tokens->next_token->next_token;
+    } else {
+        return line->tokens;
+    }
+}
+
+usize count_tokens(Token* token) {
+    usize result = 0;
+    while (token)
+    {
+        result++;
+        token = token->next_token;
+    }
+
+    return result;
+}
+
+RdpExpression build_rdp_expression(Token* token) {
+    usize token_count = count_tokens(token);
+
+    RdpExpression result = {
+        .expr = (RdpToken*) malloc(token_count * sizeof(RdpToken)),
+        .count = token_count
+    };
+
+    Token* current_token = token;
+    RdpToken* current_rdp_token = result.expr;
+
+    while(current_token) {
+        uint16 token_value;
+        // NOTE(erick): parse_value returns false if the token is not a number.
+        if(parse_value(current_token, &token_value)) {
+            current_rdp_token->type = RDP_TYPE_OPERAND;
+            current_rdp_token->operand = token_value;
+        } else if(is_operator_char(*current_token->slice.begin)) {
+            current_rdp_token->type = RDP_TYPE_OPERATOR;
+            current_rdp_token->operator = *current_token->slice.begin;
+        } else {
+            fail(NULL, RESOLVE_EXPR_ERROR, "Could not parse expression token: (%.*s)",
+                (int) current_token->slice.len, current_token->slice.begin);
+        }
+
+        current_token = current_token->next_token;
+        current_rdp_token++;
+    }
+
+    return result;
+}
+
+void print_rdp_expression(RdpExpression* expr) {
+    for(usize i = 0; i < expr->count; i++) {
+        RdpToken* current_rdp_token = expr->expr + i;
+        if(current_rdp_token->type == RDP_TYPE_OPERAND) {
+            printf("%04xh", current_rdp_token->operand);
+        } else {
+            printf(" %c ", current_rdp_token->operator);
+        }
+    }
+
+    printf("\n");
+}
+
+void resolve_expressions(Line* lines) {
+    Line* current_line = lines;
+
+    while(current_line) {
+        // NOTE(erick): We don't care if the line doesn't occupy space in memory
+        if(!current_line->occupies_space) {
+            current_line = current_line->next_line;
+            continue;
+        }
+
+        Token* instruction = get_instruction_token(current_line);
+        if(!instruction) {
+            fail(current_line, RESOLVE_EXPR_ERROR,
+                    "Line does not contain an instruction");
+        }
+
+        Token* operand = instruction->next_token;
+        if(!operand) {
+            fail(current_line, RESOLVE_EXPR_ERROR,
+                    "Line does not contain an operand");
+        }
+
+        // NOTE(erick): Nothing to do. Expression contains only one operand.
+        if(operand->next_token == NULL) {
+            current_line = current_line->next_line;
+            continue;
+        }
+
+        RdpExpression expression = build_rdp_expression(operand);
+        RdpError parse_error;
+        void* memory_to_free = expression.expr;
+
+        printf("[NOTE] Parsing expression: ");
+        print_rdp_expression(&expression);
+
+        uint expr_value = parse_expression(&expression, &parse_error);
+        if(parse_error) {
+            // TODO(erick): Print the current RdpToken (a.k.a. where the error occured)
+            // TODO(erick): Convert the enum to a string and do not print a number.
+            fail(current_line, RESOLVE_EXPR_ERROR,
+                    "Error during parse. Code %d.", parse_error);
+        }
+
+        printf("\t Result: %04xh", expr_value);
+
+        operand->slice = uint_to_string(expr_value);
+        operand->next_token = NULL;
+
+        free(memory_to_free);
+        current_line = current_line->next_line;
+    }
+}
+
 void generate_machine_code(Line* lines) {
     string_slice dw_slice  = make_string_slice("DW");
 
     Line* current_line = lines;
 
     while(current_line) {
-        if(current_line->occupies_space) {
-            uint address = current_line->address;
-            if(address >= MEMORY_SIZE) {
-                fail(current_line, MACHINE_CODE_ERROR,
-                     "Address of line is greater than the memory");
-            }
-
-            Token* instruction;
-            if(current_line->has_label) {
-                instruction = current_line->tokens->next_token->next_token;
-            } else {
-                instruction = current_line->tokens;
-            }
-
-            if(!instruction) {
-                fail(current_line, MACHINE_CODE_ERROR,
-                     "Line does not contain an instruction");
-            }
-
-            Token* operand = instruction->next_token;
-            uint16 instruction_code;
-            uint16 operand_code;
-
-            if(!operand) {
-                fail(current_line, MACHINE_CODE_ERROR,
-                     "Line does not contain an operand");
-            }
-
-            if(!parse_instruction(instruction, &instruction_code)) {
-                fail(current_line, MACHINE_CODE_ERROR,
-                     "Line with no valid instruction (%.*s)",
-                     (int) instruction->slice.len,
-                     instruction->slice.begin);
-            }
-
-            if(!parse_value(operand, &operand_code)) {
-                fail(current_line, MACHINE_CODE_ERROR,
-                     "No valid operand (%.*s)",
-                     (int) operand->slice.len,
-                     operand->slice.begin);
-            }
-
-            if((!string_slice_equals_icase(instruction->slice, dw_slice)) &&
-               operand_code >= MAX_OPERAND) {
-                fail(current_line, MACHINE_CODE_ERROR,
-                     "operand (%.*s) exceeds 14 bits",
-                     (int) operand->slice.len,
-                     operand->slice.begin);
-            }
-
-            current_line->memory_data = instruction_code | operand_code;
-            machine_code[address] = current_line->memory_data;
+        if(!current_line->occupies_space) {
+            current_line = current_line->next_line;
+            continue;
         }
+
+        uint address = current_line->address;
+        if(address >= MEMORY_SIZE) {
+            fail(current_line, MACHINE_CODE_ERROR,
+                    "Address of line is greater than the memory");
+        }
+
+        Token* instruction = get_instruction_token(current_line);
+        if(!instruction) {
+            fail(current_line, MACHINE_CODE_ERROR,
+                    "Line does not contain an instruction");
+        }
+
+        Token* operand = instruction->next_token;
+        uint16 instruction_code;
+        uint16 operand_code;
+
+        if(!operand) {
+            fail(current_line, MACHINE_CODE_ERROR,
+                    "Line does not contain an operand");
+        }
+
+        if(!parse_instruction(instruction, &instruction_code)) {
+            fail(current_line, MACHINE_CODE_ERROR,
+                    "Line with no valid instruction (%.*s)",
+                    (int) instruction->slice.len,
+                    instruction->slice.begin);
+        }
+
+        if(!parse_value(operand, &operand_code)) {
+            fail(current_line, MACHINE_CODE_ERROR,
+                    "No valid operand (%.*s)",
+                    (int) operand->slice.len,
+                    operand->slice.begin);
+        }
+
+        if((!string_slice_equals_icase(instruction->slice, dw_slice)) &&
+            operand_code >= MAX_OPERAND) {
+            fail(current_line, MACHINE_CODE_ERROR,
+                    "operand (%.*s) exceeds 14 bits",
+                    (int) operand->slice.len,
+                    operand->slice.begin);
+        }
+
+        current_line->memory_data = instruction_code | operand_code;
+        machine_code[address] = current_line->memory_data;
 
         current_line = current_line->next_line;
     }
@@ -1193,7 +1308,7 @@ int main(int args_count, char** args_values) {
 
     compute_addresses(lines);
     propagate_labels(lines);
-    // resolve_expressions(lines);
+    resolve_expressions(lines);
     generate_machine_code(lines);
 
     output_binary_file(output_filename);

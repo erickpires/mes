@@ -16,7 +16,8 @@
 #define MACRO_ERROR        8
 #define ADDRESS_ERROR      9
 #define LABEL_ERROR        10
-#define MACHINE_CODE_ERROR 11
+#define RESOLVE_EXPR_ERROR 11
+#define MACHINE_CODE_ERROR 12
 
 //
 // Constants

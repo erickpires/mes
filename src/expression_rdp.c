@@ -124,12 +124,17 @@ uint parse_E(RdpExpression* expr) {
     return parse_E_prime(expr, t);
 }
 
-uint parse_expression(RdpToken* expression, usize expression_size, RdpError* err) {
+uint _parse_expression(RdpToken* expression, usize expression_size, RdpError* err) {
     RdpExpression expr = {expression, expression_size};
-    *err = error;
-    return parse_E(&expr);
+    return parse_expression(&expr, err);
 }
 
+uint parse_expression(RdpExpression* expr, RdpError* err) {
+    uint result = parse_E(expr);
+
+    *err = error;
+    return result;
+}
 
 #if TEST_RDP
 #define sizeof_array(a) (sizeof(a)/sizeof(a[0]))
@@ -176,12 +181,12 @@ int main(int args_count, char** args_values) {
 
 
     RdpError dummy;
-    uint eighteen = parse_expression(_1, sizeof_array(_1), &dummy);
-    uint thirty_seven = parse_expression(_2, sizeof_array(_2), &dummy);
-    uint fourty_seven = parse_expression(_3, sizeof_array(_3), &dummy);
-    uint two_ten = parse_expression(_4, sizeof_array(_4), &dummy);
-    uint seventy_seven = parse_expression(_5, sizeof_array(_5), &dummy);
-    uint sixty_five = parse_expression(_6, sizeof_array(_6), &dummy);
+    uint eighteen = _parse_expression(_1, sizeof_array(_1), &dummy);
+    uint thirty_seven = _parse_expression(_2, sizeof_array(_2), &dummy);
+    uint fourty_seven = _parse_expression(_3, sizeof_array(_3), &dummy);
+    uint two_ten = _parse_expression(_4, sizeof_array(_4), &dummy);
+    uint seventy_seven = _parse_expression(_5, sizeof_array(_5), &dummy);
+    uint sixty_five = _parse_expression(_6, sizeof_array(_6), &dummy);
 
     printf("18 == %d\n", eighteen);
     printf("37 == %d\n", thirty_seven);
@@ -192,5 +197,4 @@ int main(int args_count, char** args_values) {
 
     return 0;
 }
-
 #endif

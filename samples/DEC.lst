@@ -30,8 +30,9 @@ LST file
 000f:      ORG 15 
 
 000f:      Var1 equ IniRam 
+000f:      Var2 equ ( Var1 + 1 ) 
 000f: 0005 LM 0005h 
-0010: 4400 Loop : EM 400h + 2 
+0010: 4401 Loop : EM 0401h 
 0011: 0001 LM 0001h 
 0012: 8400 SB 400h 
 0013: c010 DNP 0010h 

@@ -11,8 +11,9 @@ Halt  MACRO
       ORG 15
 
       Var1 equ IniRam
+      Var2 equ (Var1 + 1)
       LM Quinze
-Loop: EM Var1 + 2
+Loop: EM Var2
       LM Um
       SB Var1
       DNP Loop
