@@ -21,12 +21,11 @@ typedef unsigned int uint;
 
 // TODO(erick):
 //    Expressions resolution
-//    Do something with line numbers of lines the came from a macro expansion
+//    Do something with line numbers of lines the came from a macro expansion (???)
 //    Allocate variables in RAM
 //    Better print labels on the .lst file
 //    Help message
 //    Header file
-//    Linear memory allocator
 
 //
 // Error Codes
@@ -434,7 +433,7 @@ Token* new_token(string_slice slice) {
 void tokenize_lines(Line* lines) {
     Line* current_line = lines;
     while(current_line) {
-        string_slice full_line = current_line->comment;
+        string_slice full_line = current_line->line_content;
 
         string_slice code = find_char_from_left(full_line, ';');
         if(code.len > 0 && code.begin[code.len - 1] == ';') {
@@ -465,7 +464,13 @@ void tokenize_lines(Line* lines) {
 
             } else if(*code.begin == ':' ||
                       *code.begin == '$' ||
-                      *code.begin == ',') {
+                      *code.begin == ',' ||
+                      *code.begin == '(' ||
+                      *code.begin == ')' ||
+                      *code.begin == '+' ||
+                      *code.begin == '-' ||
+                      *code.begin == '*' ||
+                      *code.begin == '/') {
                 token.begin = code.begin;
                 token.len = 1;
             } else {
