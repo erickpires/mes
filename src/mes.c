@@ -23,12 +23,10 @@ typedef uint64_t     uint64;
 typedef unsigned int uint;
 
 // TODO(erick):
-//    Expressions resolution
+//    Read include files from the same folder as the input file (instead of the current directory)
 //    Do something with line numbers of lines the came from a macro expansion (???)
 //    Allocate variables in RAM
 //    Better print labels on the .lst file
-//    Help message
-//    Header file
 //    Intel hex file
 //    Use a verbose flag to decide if [NOTEs] should be printed
 
@@ -63,7 +61,15 @@ usize org_change_list_count = 0;
 uint last_address;
 
 void print_help_and_exit(int status) {
-    printf("HELP\n");
+    printf("Usage:\n");
+    printf("\t\tmes <input_file> [-h] [-H] [-c] [-B] [-o <output_prefix>]\n");
+
+    printf("Parameters\n");
+    printf("\t-h\t\t: Print this help info and exit\n");
+    printf("\t-H\t\t: Output Intel hex file\n");
+    printf("\t-c\t\t: Output CES hex file\n");
+    printf("\t-B\t\t: Output two binary files. One for upper byte, one for lower byte\n");
+    printf("\t-o output\t: Use 'output' as the output files prefix\n");
     exit(status);
 }
 
