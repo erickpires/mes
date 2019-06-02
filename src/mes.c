@@ -1111,7 +1111,7 @@ void resolve_expressions(Line* lines) {
                     "Error during parse. Code %d.", parse_error);
         }
 
-        printf("\t Result: %04xh", expr_value);
+        printf("\t Result: %04xh\n", expr_value);
 
         operand->slice = uint_to_string(expr_value);
         operand->next_token = NULL;

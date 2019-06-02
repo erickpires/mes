@@ -18,6 +18,7 @@
 #define LABEL_ERROR        10
 #define RESOLVE_EXPR_ERROR 11
 #define MACHINE_CODE_ERROR 12
+#define OUTPUT_ERROR       13
 
 //
 // Constants

@@ -1,4 +1,5 @@
 #include "std_types.h"
+#include "mes_utils.h"
 #include "mes.h"
 
 extern uint16 machine_code[];
@@ -38,14 +39,57 @@ void output_lst_file(char* file_stem, Line* lines) {
     fclose(file);
 }
 
+uint8 calculate_intel_checksum(uint8 bytes, uint16 address, uint8 sum_of_bytes) {
+    uint sum = bytes + sum_of_bytes + (address & 0xFF) + ((address >> 8) & 0xFF);
+
+    return (~sum) + 1;
+}
+
 void output_hex_file(char* file_stem) {
     char* filename = (char*) malloc(strlen(file_stem) + strlen(".hex") + 1);
     strcpy(filename, file_stem);
     strcat(filename, ".hex");
 
     FILE* file = fopen(filename, "w");
-    fprintf(file, "HEX file\n");
 
+    // NOTE(erick): Each word occupies 2 bytes
+    usize total_size = MEMORY_SIZE * 2;
+    uint16 current_address = 0;
+    uint16* current_word = machine_code;
+
+
+    while(total_size) {
+        uint8 sum_of_bytes = 0;
+
+        //NOTE(erick): We need an even number of bytes to write here
+        uint8 bytes_to_write = total_size > 256 ? 254 : total_size;
+        if(bytes_to_write % 2 != 0) {
+            fail(NULL, OUTPUT_ERROR,
+                 "Intel hex output. Not even number of bytes to write %d\n", bytes_to_write);
+        }
+
+        fprintf(file, ":%02X%04X00", bytes_to_write, current_address);
+
+        for(uint bytes_written = 0; bytes_written < bytes_to_write; bytes_written += 2) {
+            uint8 lower_byte = *current_word & 0xFF;
+            uint8 upper_byte = *current_word >> 8;
+
+            fprintf(file, "%02X%02X", upper_byte, lower_byte);
+
+            sum_of_bytes += upper_byte;
+            sum_of_bytes += lower_byte;
+
+            current_word++;
+        }
+
+        uint8 checksum = calculate_intel_checksum(bytes_to_write, current_address, sum_of_bytes);
+        fprintf(file, "%02X\n", checksum);
+
+        current_address += bytes_to_write;
+        total_size -= bytes_to_write;
+    }
+
+    fprintf(file, ":00000001FF");
     fclose(file);
 }
 
